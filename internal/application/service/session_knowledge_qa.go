@@ -183,18 +183,7 @@ func (s *sessionService) KnowledgeQA(
 			Build()
 	} else {
 		// RAG — dynamically assemble based on feature flags.
-		pipeline = types.NewPipelineBuilder().
-			AddIf(hasHistory, types.LOAD_HISTORY).
-			Add(types.QUERY_UNDERSTAND).
-			Add(types.CHUNK_SEARCH_PARALLEL).
-			Add(types.CHUNK_RERANK).
-			AddIf(req.WebSearchEnabled, types.WEB_FETCH).
-			Add(types.CHUNK_MERGE).
-			Add(types.FILTER_TOP_K).
-			AddIf(chatManage.DataAnalysisEnabled, types.DATA_ANALYSIS).
-			Add(types.INTO_CHAT_MESSAGE).
-			Add(types.CHAT_COMPLETION_STREAM).
-			Build()
+		pipeline = buildRAGPipeline(hasHistory, req.WebSearchEnabled, chatManage.DataAnalysisEnabled)
 	}
 
 	logger.Infof(ctx, "Assembled pipeline (%d stages), hasKB=%v, webSearch=%v, history=%v",
@@ -873,12 +862,7 @@ func (s *sessionService) SearchKnowledge(ctx context.Context,
 	}
 
 	// Use specific event list, only including retrieval-related events, not LLM summarization
-	searchEvents := []types.EventType{
-		types.CHUNK_SEARCH, // Vector search
-		types.CHUNK_RERANK, // Rerank search results
-		types.CHUNK_MERGE,  // Merge search results
-		types.FILTER_TOP_K, // Filter top K results
-	}
+	searchEvents := buildSearchKnowledgePipeline()
 
 	logger.Infof(ctx, "Trigger search event list: %v", searchEvents)
 
@@ -913,6 +897,32 @@ func (s *sessionService) SearchKnowledge(ctx context.Context,
 
 	logger.Infof(ctx, "Knowledge base search completed, found %d results", len(chatManage.MergeResult))
 	return chatManage.MergeResult, nil
+}
+
+func buildRAGPipeline(hasHistory, webSearchEnabled, dataAnalysisEnabled bool) []types.EventType {
+	return types.NewPipelineBuilder().
+		AddIf(hasHistory, types.LOAD_HISTORY).
+		Add(types.QUERY_UNDERSTAND).
+		Add(types.CHUNK_SEARCH_PARALLEL).
+		Add(types.CHUNK_RERANK).
+		AddIf(webSearchEnabled, types.WEB_FETCH).
+		Add(types.CHUNK_FEEDBACK_WEIGHT).
+		Add(types.CHUNK_MERGE).
+		Add(types.FILTER_TOP_K).
+		AddIf(dataAnalysisEnabled, types.DATA_ANALYSIS).
+		Add(types.INTO_CHAT_MESSAGE).
+		Add(types.CHAT_COMPLETION_STREAM).
+		Build()
+}
+
+func buildSearchKnowledgePipeline() []types.EventType {
+	return []types.EventType{
+		types.CHUNK_SEARCH,
+		types.CHUNK_RERANK,
+		types.CHUNK_FEEDBACK_WEIGHT,
+		types.CHUNK_MERGE,
+		types.FILTER_TOP_K,
+	}
 }
 
 // handleFallbackResponse handles fallback response based on strategy

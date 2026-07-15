@@ -130,6 +130,7 @@ type KnowledgeSearchTool struct {
 	rerankModel          rerank.Reranker
 	chatModel            chat.Chat      // Optional chat model for LLM-based reranking
 	config               *config.Config // Global config for fallback values
+	feedbackWeightReader chunkRecallWeightReader
 
 	seenMu     sync.Mutex
 	seenChunks map[string]bool
@@ -145,7 +146,7 @@ func NewKnowledgeSearchTool(
 	chatModel chat.Chat,
 	cfg *config.Config,
 ) *KnowledgeSearchTool {
-	return &KnowledgeSearchTool{
+	tool := &KnowledgeSearchTool{
 		BaseTool:             knowledgeSearchTool,
 		knowledgeBaseService: knowledgeBaseService,
 		knowledgeService:     knowledgeService,
@@ -156,6 +157,10 @@ func NewKnowledgeSearchTool(
 		config:               cfg,
 		seenChunks:           make(map[string]bool),
 	}
+	if chunkService != nil {
+		tool.feedbackWeightReader = chunkService.GetRepository()
+	}
+	return tool
 }
 
 // Execute executes the knowledge search tool
@@ -320,6 +325,10 @@ func (t *KnowledgeSearchTool) Execute(ctx context.Context, args json.RawMessage)
 		// No reranking model available, use deduplicated results
 		filteredResults = deduplicatedBeforeRerank
 	}
+
+	// Apply answer-feedback weights before MMR so both relevance and diversity
+	// selection see the adjusted recall priority.
+	t.applyFeedbackWeights(ctx, filteredResults, searchTargets)
 
 	// Apply MMR (Maximal Marginal Relevance) to reduce redundancy and improve diversity
 	// Note: composite scoring is already applied inside rerankResults

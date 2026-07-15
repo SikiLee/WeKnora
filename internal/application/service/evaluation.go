@@ -404,6 +404,7 @@ func (e *EvaluationService) EvalDataset(ctx context.Context, detail *types.Evalu
 				&types.SearchTarget{
 					Type:            types.SearchTargetTypeKnowledgeBase,
 					KnowledgeBaseID: knowledgeBaseID,
+					TenantID:        detail.Task.TenantID,
 				},
 			}
 

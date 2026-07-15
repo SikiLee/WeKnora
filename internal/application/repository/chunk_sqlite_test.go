@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/types"
+	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -351,4 +352,52 @@ func TestUpdateChunk_SQLite_PreservesFeedbackAggregatesFromConcurrentUpdate(t *t
 	require.True(t, saved.NeedsOptimization)
 	require.NotNil(t, saved.FeedbackResetAt)
 	require.NotNil(t, saved.FeedbackUpdatedAt)
+}
+
+func TestListChunkRecallWeights_SQLiteScopesTenantAndKnowledgeBase(t *testing.T) {
+	db := setupChunkTestDB(t)
+	repo := NewChunkRepository(db)
+	ctx := context.Background()
+
+	owned := makeChunk("kb-owned", "knowledge-owned", "text")
+	owned.RecallWeight = 1.2
+	shared := makeChunk("kb-shared", "knowledge-shared", "text")
+	shared.TenantID = 2
+	shared.RecallWeight = 0.8
+	require.NoError(t, repo.CreateChunks(ctx, []*types.Chunk{owned, shared}))
+
+	weights, err := repo.ListChunkRecallWeights(ctx, []interfaces.ChunkFeedbackWeightScope{
+		{TenantID: 1, KnowledgeBaseID: "kb-owned", ChunkID: owned.ID},
+		{TenantID: 2, KnowledgeBaseID: "kb-shared", ChunkID: shared.ID},
+		{TenantID: 1, KnowledgeBaseID: "kb-shared", ChunkID: shared.ID},
+		{TenantID: 2, KnowledgeBaseID: "forged-kb", ChunkID: shared.ID},
+		{TenantID: 1, KnowledgeBaseID: "kb-owned", ChunkID: owned.ID},
+	})
+	require.NoError(t, err)
+	require.Len(t, weights, 2)
+
+	byID := make(map[string]interfaces.ChunkRecallWeight, len(weights))
+	for _, weight := range weights {
+		byID[weight.ChunkID] = weight
+	}
+	assert.Equal(t, uint64(1), byID[owned.ID].TenantID)
+	assert.Equal(t, "kb-owned", byID[owned.ID].KnowledgeBaseID)
+	assert.Equal(t, 1.2, byID[owned.ID].RecallWeight)
+	assert.Equal(t, uint64(2), byID[shared.ID].TenantID)
+	assert.Equal(t, "kb-shared", byID[shared.ID].KnowledgeBaseID)
+	assert.Equal(t, 0.8, byID[shared.ID].RecallWeight)
+
+	wrongScopeOnly, err := repo.ListChunkRecallWeights(ctx, []interfaces.ChunkFeedbackWeightScope{
+		{TenantID: 1, KnowledgeBaseID: "kb-shared", ChunkID: shared.ID},
+		{TenantID: 2, KnowledgeBaseID: "forged-kb", ChunkID: shared.ID},
+	})
+	require.NoError(t, err)
+	assert.Empty(t, wrongScopeOnly)
+
+	require.NoError(t, db.WithContext(ctx).Delete(shared).Error)
+	deleted, err := repo.ListChunkRecallWeights(ctx, []interfaces.ChunkFeedbackWeightScope{
+		{TenantID: 2, KnowledgeBaseID: "kb-shared", ChunkID: shared.ID},
+	})
+	require.NoError(t, err)
+	assert.Empty(t, deleted)
 }

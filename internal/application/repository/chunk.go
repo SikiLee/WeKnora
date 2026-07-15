@@ -121,6 +121,75 @@ func (r *chunkRepository) ListChunksByIDOnly(ctx context.Context, ids []string) 
 	return chunks, nil
 }
 
+// ListChunkRecallWeights loads only the fields needed by retrieval reranking.
+// Scopes are grouped by tenant and KB so shared-KB results are read from their
+// owning tenant without issuing one query per chunk.
+func (r *chunkRepository) ListChunkRecallWeights(
+	ctx context.Context,
+	scopes []interfaces.ChunkFeedbackWeightScope,
+) ([]interfaces.ChunkRecallWeight, error) {
+	if len(scopes) == 0 {
+		return nil, nil
+	}
+
+	type scopeGroup struct {
+		tenantID uint64
+		kbID     string
+		ids      []string
+		seen     map[string]struct{}
+	}
+	groupsByKey := make(map[string]*scopeGroup)
+	groupOrder := make([]string, 0)
+	for _, scope := range scopes {
+		if scope.TenantID == 0 || scope.KnowledgeBaseID == "" || scope.ChunkID == "" {
+			continue
+		}
+		key := fmt.Sprintf("%d\x00%s", scope.TenantID, scope.KnowledgeBaseID)
+		group := groupsByKey[key]
+		if group == nil {
+			group = &scopeGroup{
+				tenantID: scope.TenantID,
+				kbID:     scope.KnowledgeBaseID,
+				seen:     make(map[string]struct{}),
+			}
+			groupsByKey[key] = group
+			groupOrder = append(groupOrder, key)
+		}
+		if _, ok := group.seen[scope.ChunkID]; ok {
+			continue
+		}
+		group.seen[scope.ChunkID] = struct{}{}
+		group.ids = append(group.ids, scope.ChunkID)
+	}
+	if len(groupOrder) == 0 {
+		return nil, nil
+	}
+
+	db := r.db.WithContext(ctx).Model(&types.Chunk{}).
+		Select("tenant_id, knowledge_base_id, id AS chunk_id, recall_weight")
+	var condition *gorm.DB
+	for _, key := range groupOrder {
+		group := groupsByKey[key]
+		part := r.db.Where(
+			"tenant_id = ? AND knowledge_base_id = ? AND id IN ?",
+			group.tenantID,
+			group.kbID,
+			group.ids,
+		)
+		if condition == nil {
+			condition = part
+		} else {
+			condition = condition.Or(part)
+		}
+	}
+
+	var weights []interfaces.ChunkRecallWeight
+	if err := db.Where(condition).Scan(&weights).Error; err != nil {
+		return nil, err
+	}
+	return weights, nil
+}
+
 // ListChunksBySeqID retrieves multiple chunks by their seq_ids
 func (r *chunkRepository) ListChunksBySeqID(
 	ctx context.Context, tenantID uint64, seqIDs []int64,

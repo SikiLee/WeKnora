@@ -324,6 +324,7 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Invoke(chatpipeline.NewPluginSearch))
 	must(container.Invoke(chatpipeline.NewPluginRerank))
 	must(container.Invoke(chatpipeline.NewPluginWebFetch))
+	must(container.Invoke(chatpipeline.NewPluginFeedbackWeight))
 	must(container.Invoke(chatpipeline.NewPluginMerge))
 	must(container.Invoke(chatpipeline.NewPluginDataAnalysis))
 	must(container.Invoke(chatpipeline.NewPluginIntoChatMessage))

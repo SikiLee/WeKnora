@@ -267,6 +267,7 @@ const (
 	ENTITY_SEARCH          EventType = "entity_search"
 	CHUNK_RERANK           EventType = "chunk_rerank"
 	WEB_FETCH              EventType = "web_fetch"
+	CHUNK_FEEDBACK_WEIGHT  EventType = "chunk_feedback_weight"
 	CHUNK_MERGE            EventType = "chunk_merge"
 	DATA_ANALYSIS          EventType = "data_analysis"
 	INTO_CHAT_MESSAGE      EventType = "into_chat_message"
@@ -322,6 +323,7 @@ var Pipeline = map[string][]EventType{
 	"rag": {
 		CHUNK_SEARCH,
 		CHUNK_RERANK,
+		CHUNK_FEEDBACK_WEIGHT,
 		CHUNK_MERGE,
 		INTO_CHAT_MESSAGE,
 		CHAT_COMPLETION,
@@ -331,6 +333,7 @@ var Pipeline = map[string][]EventType{
 		QUERY_UNDERSTAND,
 		CHUNK_SEARCH_PARALLEL,
 		CHUNK_RERANK,
+		CHUNK_FEEDBACK_WEIGHT,
 		CHUNK_MERGE,
 		FILTER_TOP_K,
 		DATA_ANALYSIS,

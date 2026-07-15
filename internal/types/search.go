@@ -204,6 +204,10 @@ type SearchResult struct {
 
 	// KnowledgeBaseID is the ID of the knowledge base this result belongs to
 	KnowledgeBaseID string `json:"knowledge_base_id,omitempty"`
+
+	// FeedbackWeightApplied prevents an accidentally duplicated pipeline stage
+	// from multiplying the same score more than once.
+	FeedbackWeightApplied bool `json:"-" gorm:"-"`
 }
 
 // SearchParams represents the search parameters

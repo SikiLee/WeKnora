@@ -42,7 +42,8 @@ func IsConsolidatedRetrievalStage(stage types.EventType, chatManage *types.ChatM
 		return false
 	}
 	switch stage {
-	case types.CHUNK_SEARCH_PARALLEL, types.CHUNK_RERANK, types.CHUNK_MERGE, types.FILTER_TOP_K:
+	case types.CHUNK_SEARCH_PARALLEL, types.CHUNK_RERANK, types.CHUNK_FEEDBACK_WEIGHT,
+		types.CHUNK_MERGE, types.FILTER_TOP_K:
 		return chatManage.NeedsRetrieval()
 	case types.WEB_FETCH:
 		return chatManage.WebSearchEnabled

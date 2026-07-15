@@ -3,7 +3,6 @@ package chatpipeline
 import (
 	"context"
 	"encoding/json"
-	"sort"
 
 	"github.com/Tencent/WeKnora/internal/searchutil"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -69,10 +68,8 @@ func (p *PluginMerge) mergeOverlappingChunks(
 		}
 	}
 
-	// Sort merged chunks by score (highest first)
-	sort.Slice(merged, func(i, j int) bool {
-		return merged[i].Score > merged[j].Score
-	})
+	// Sort merged chunks by score while preserving document order for ties.
+	stableSortSearchResultsByScore(merged)
 
 	return merged
 }

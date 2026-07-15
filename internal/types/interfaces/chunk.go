@@ -12,6 +12,21 @@ type ChunkImageInfo struct {
 	ImageInfo   string `gorm:"column:image_info"`
 }
 
+// ChunkFeedbackWeightScope identifies one chunk in its owning tenant and KB.
+type ChunkFeedbackWeightScope struct {
+	TenantID        uint64
+	KnowledgeBaseID string
+	ChunkID         string
+}
+
+// ChunkRecallWeight is the retrieval weight stored for one chunk.
+type ChunkRecallWeight struct {
+	TenantID        uint64  `gorm:"column:tenant_id"`
+	KnowledgeBaseID string  `gorm:"column:knowledge_base_id"`
+	ChunkID         string  `gorm:"column:chunk_id"`
+	RecallWeight    float64 `gorm:"column:recall_weight"`
+}
+
 // ChunkRepository defines the interface for chunk repository operations
 type ChunkRepository interface {
 	// CreateChunks creates chunks
@@ -26,6 +41,8 @@ type ChunkRepository interface {
 	ListChunksByID(ctx context.Context, tenantID uint64, ids []string) ([]*types.Chunk, error)
 	// ListChunksByIDOnly lists chunks by ids without tenant filter (for shared KB resolution).
 	ListChunksByIDOnly(ctx context.Context, ids []string) ([]*types.Chunk, error)
+	// ListChunkRecallWeights loads feedback weights for tenant-scoped chunks in one query.
+	ListChunkRecallWeights(ctx context.Context, scopes []ChunkFeedbackWeightScope) ([]ChunkRecallWeight, error)
 	// ListChunksBySeqID lists chunks by seq_ids
 	ListChunksBySeqID(ctx context.Context, tenantID uint64, seqIDs []int64) ([]*types.Chunk, error)
 	// ListChunksByKnowledgeID lists chunks by knowledge id

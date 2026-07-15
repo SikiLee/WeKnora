@@ -91,6 +91,10 @@ func (p *PluginMerge) OnEvent(ctx context.Context,
 	// Step 8: Final dedup — catches exact duplicates plus partial content overlaps
 	mergedChunks = p.dedup(ctx, "final_dedup", mergedChunks)
 	mergedChunks = removePartialOverlaps(ctx, mergedChunks)
+	// Grouping is map-backed and can scramble cross-document order. Restore the
+	// global score order so pipelines without FILTER_TOP_K also retain rerank and
+	// feedback-weight priority.
+	stableSortSearchResultsByScore(mergedChunks)
 
 	chatManage.MergeResult = mergedChunks
 	return next()
@@ -106,9 +110,7 @@ func (p *PluginMerge) selectInputResults(ctx context.Context, chatManage *types.
 		"reason": "empty_rerank_result",
 	})
 	result := chatManage.SearchResult
-	sort.Slice(result, func(i, j int) bool {
-		return result[i].Score > result[j].Score
-	})
+	stableSortSearchResultsByScore(result)
 	return result
 }
 
@@ -147,32 +149,37 @@ func (p *PluginMerge) injectHistoryResults(
 // groupAndMergeOverlapping groups chunks by KnowledgeID + ChunkType, then merges
 // overlapping ranges within each group using mergeOverlappingChunks.
 func (p *PluginMerge) groupAndMergeOverlapping(ctx context.Context, results []*types.SearchResult) []*types.SearchResult {
-	// Group by KnowledgeID → ChunkType
-	knowledgeGroup := make(map[string]map[string][]*types.SearchResult)
-	for _, chunk := range results {
-		if _, ok := knowledgeGroup[chunk.KnowledgeID]; !ok {
-			knowledgeGroup[chunk.KnowledgeID] = make(map[string][]*types.SearchResult)
-		}
-		knowledgeGroup[chunk.KnowledgeID][chunk.ChunkType] = append(
-			knowledgeGroup[chunk.KnowledgeID][chunk.ChunkType], chunk,
-		)
+	// Build groups in first-seen order. Map iteration here used to randomize
+	// equal-score chunks from different documents before the final stable sort.
+	type groupKey struct {
+		knowledgeID string
+		chunkType   string
 	}
-
-	pipelineInfo(ctx, "Merge", "group_summary", map[string]interface{}{
-		"knowledge_cnt": len(knowledgeGroup),
-	})
-
-	// Flatten into independent (knowledgeID, chunks) work units for parallel merge.
 	type mergeUnit struct {
 		knowledgeID string
 		chunks      []*types.SearchResult
 	}
-	var units []mergeUnit
-	for knowledgeID, chunkGroup := range knowledgeGroup {
-		for _, chunks := range chunkGroup {
-			units = append(units, mergeUnit{knowledgeID: knowledgeID, chunks: chunks})
+	units := make([]mergeUnit, 0)
+	groupIndex := make(map[groupKey]int)
+	knowledgeIDs := make(map[string]struct{})
+	for _, chunk := range results {
+		if chunk == nil {
+			continue
 		}
+		key := groupKey{knowledgeID: chunk.KnowledgeID, chunkType: chunk.ChunkType}
+		index, ok := groupIndex[key]
+		if !ok {
+			index = len(units)
+			groupIndex[key] = index
+			units = append(units, mergeUnit{knowledgeID: chunk.KnowledgeID})
+		}
+		units[index].chunks = append(units[index].chunks, chunk)
+		knowledgeIDs[chunk.KnowledgeID] = struct{}{}
 	}
+
+	pipelineInfo(ctx, "Merge", "group_summary", map[string]interface{}{
+		"knowledge_cnt": len(knowledgeIDs),
+	})
 
 	groupResults := ParallelMap(units, 0, func(_ int, u mergeUnit) []*types.SearchResult {
 		pipelineInfo(ctx, "Merge", "group_process", map[string]interface{}{
@@ -180,7 +187,7 @@ func (p *PluginMerge) groupAndMergeOverlapping(ctx context.Context, results []*t
 			"chunk_cnt":    len(u.chunks),
 		})
 
-		sort.Slice(u.chunks, func(i, j int) bool {
+		sort.SliceStable(u.chunks, func(i, j int) bool {
 			if u.chunks[i].StartAt == u.chunks[j].StartAt {
 				return u.chunks[i].EndAt < u.chunks[j].EndAt
 			}

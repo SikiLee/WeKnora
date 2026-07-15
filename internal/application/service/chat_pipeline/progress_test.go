@@ -36,6 +36,7 @@ func TestLastConsolidatedRetrievalStage(t *testing.T) {
 		types.QUERY_UNDERSTAND,
 		types.CHUNK_SEARCH_PARALLEL,
 		types.CHUNK_RERANK,
+		types.CHUNK_FEEDBACK_WEIGHT,
 		types.CHUNK_MERGE,
 		types.FILTER_TOP_K,
 		types.INTO_CHAT_MESSAGE,
@@ -57,6 +58,10 @@ func TestShouldCloseRetrievalProgress(t *testing.T) {
 
 	// A hard error at any retrieval stage must also close the window.
 	assert.True(t, ShouldCloseRetrievalProgress(types.CHUNK_RERANK, last, &PluginError{}))
+}
+
+func TestFeedbackWeightIsConsolidatedRetrievalStage(t *testing.T) {
+	assert.True(t, IsConsolidatedRetrievalStage(types.CHUNK_FEEDBACK_WEIGHT, &types.ChatManage{}))
 }
 
 func TestShouldEmitQueryUnderstandProgress(t *testing.T) {
