@@ -20,7 +20,8 @@ import (
 // MessageHandler handles HTTP requests related to messages within chat sessions
 // It provides endpoints for loading and managing message history
 type MessageHandler struct {
-	MessageService interfaces.MessageService // Service that implements message business logic
+	MessageService  interfaces.MessageService // Service that implements message business logic
+	FeedbackService interfaces.FeedbackService
 }
 
 // NewMessageHandler creates a new message handler instance with the required service
@@ -28,9 +29,13 @@ type MessageHandler struct {
 //   - messageService: Service that implements message business logic
 //
 // Returns a pointer to a new MessageHandler
-func NewMessageHandler(messageService interfaces.MessageService) *MessageHandler {
+func NewMessageHandler(
+	messageService interfaces.MessageService,
+	feedbackService interfaces.FeedbackService,
+) *MessageHandler {
 	return &MessageHandler{
-		MessageService: messageService,
+		MessageService:  messageService,
+		FeedbackService: feedbackService,
 	}
 }
 

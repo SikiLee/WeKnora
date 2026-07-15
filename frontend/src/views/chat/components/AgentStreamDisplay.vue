@@ -315,6 +315,9 @@
                   :title="$t('agent.addToKnowledgeBase')">
                   <t-icon name="bookmark-add" />
                 </t-button>
+                <AnswerFeedbackControls v-if="!embeddedMode" :session-id="sessionId || ''" :message-id="session.id || ''"
+                  :completed="Boolean(isConversationDone)" :feedback="session.feedback"
+                  @update:feedback="handleFeedbackUpdated" />
                 <t-tooltip v-if="event.is_fallback" :content="$t('chat.fallbackHint')" placement="top">
                   <t-button size="small" variant="outline" shape="round" class="fallback-icon-btn">
                     <t-icon name="info-circle" />
@@ -490,6 +493,7 @@ import ToolResultRenderer from './ToolResultRenderer.vue';
 import ToolApprovalCard from './ToolApprovalCard.vue';
 import McpOAuthCard from './McpOAuthCard.vue';
 import ChatRequestInfoButton from '@/components/ChatRequestInfoButton.vue';
+import AnswerFeedbackControls from '@/components/AnswerFeedbackControls.vue';
 import ChatCitationFloat from '@/components/ChatCitationFloat.vue';
 import picturePreview from '@/components/picture-preview.vue';
 import { countGrepDocuments, groupGrepChunkResults } from '@/utils/grepResultsGroup';
@@ -534,6 +538,7 @@ import {
 import { attachMarkdownEnhancementListeners, refreshMarkdownEnhancements } from '@/utils/markdownEnhancements';
 import { useTypewriter } from '@/composables/useTypewriter';
 import { vStableHtml } from '@/directives/stableHtml';
+import type { MessageFeedbackState } from '@/api/feedback';
 
 const getToolIconName = getAgentToolIconName;
 
@@ -785,6 +790,7 @@ interface SessionData {
   isAgentMode?: boolean;
   agentEventStream?: any[];
   knowledge_references?: any[];
+  feedback?: MessageFeedbackState | null;
   [key: string]: unknown;
 }
 
@@ -804,6 +810,10 @@ const props = defineProps<{
 const emit = defineEmits<{
   (event: 'render-complete-change', ready: boolean): void;
 }>();
+
+const handleFeedbackUpdated = (feedback: MessageFeedbackState | null) => {
+  props.session.feedback = feedback;
+};
 
 const embedAuthProps = computed(() => ({
   embeddedMode: props.embeddedMode,

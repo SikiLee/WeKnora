@@ -1,0 +1,269 @@
+import assert from 'node:assert/strict'
+import test from 'node:test'
+
+import type {
+  ChunkFeedbackDetail,
+  ChunkFeedbackListItem,
+  ChunkFeedbackListParams,
+  ChunkFeedbackWeightLog,
+} from '../api/feedback'
+import { canGovernChunkFeedback, useChunkFeedbackGovernance } from './useChunkFeedbackGovernance'
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((next) => { resolve = next })
+  return { promise, resolve }
+}
+
+const listItem: ChunkFeedbackListItem = {
+  chunk_id: 'chunk-1',
+  knowledge_id: 'knowledge-1',
+  knowledge_title: 'Guide',
+  chunk_index: 2,
+  chunk_type: 'text',
+  content_preview: 'preview',
+  like_count: 1,
+  dislike_count: 3,
+  session_count: 2,
+  positive_rate: 0.25,
+  recall_weight: 0.8,
+  needs_optimization: false,
+}
+
+const detail: ChunkFeedbackDetail = {
+  ...listItem,
+  content: 'full content',
+  reason_counts: [{ reason_code: 'incorrect', count: 2 }],
+}
+
+const log: ChunkFeedbackWeightLog = {
+  id: 'log-1',
+  old_weight: 1,
+  new_weight: 0.8,
+  source: 'user_feedback',
+  source_action: 'dislike',
+  created_at: '2026-07-15T08:30:00Z',
+}
+
+test('governance visibility mirrors role, ownership, and shared-KB restrictions', () => {
+  const base = { vectorStoreSource: 'user', creatorId: 'user-1', userId: 'user-1' }
+  assert.equal(canGovernChunkFeedback({ ...base, role: 'owner' }), true)
+  assert.equal(canGovernChunkFeedback({ ...base, role: 'admin' }), true)
+  assert.equal(canGovernChunkFeedback({ ...base, role: 'contributor' }), true)
+  assert.equal(canGovernChunkFeedback({ ...base, role: 'contributor', userId: 'user-2' }), false)
+  assert.equal(canGovernChunkFeedback({ ...base, role: 'viewer' }), false)
+  assert.equal(canGovernChunkFeedback({ ...base, role: 'admin', vectorStoreSource: 'shared' }), false)
+})
+
+test('governance list sends filters, sort, and pagination to the server', async () => {
+  let received: ChunkFeedbackListParams | undefined
+  const model = useChunkFeedbackGovernance({
+    kbId: 'kb-1',
+    api: {
+      list: async (kbId, params) => {
+        assert.equal(kbId, 'kb-1')
+        received = params
+        return { success: true, data: { total: 1, page: 2, page_size: 50, data: [listItem] } }
+      },
+      detail: async () => ({ success: true, data: detail }),
+      logs: async () => ({ success: true, data: { total: 0, page: 1, page_size: 20, data: [] } }),
+      reset: async () => ({ success: true, data: detail }),
+    },
+  })
+  model.page.value = 2
+  model.pageSize.value = 50
+  model.filters.keyword = '  guide  '
+  model.filters.feedbackStatus = 'low'
+  model.filters.optimization = 'yes'
+  model.filters.sortBy = 'positive_rate'
+  model.filters.sortOrder = 'asc'
+
+  assert.equal(await model.loadList(), true)
+  assert.deepEqual(received, {
+    page: 2,
+    page_size: 50,
+    keyword: 'guide',
+    feedback_status: 'low',
+    needs_optimization: true,
+    sort_by: 'positive_rate',
+    sort_order: 'asc',
+  })
+  assert.deepEqual(model.items.value, [listItem])
+  assert.equal(model.total.value, 1)
+})
+
+test('opening detail loads reason aggregation and weight logs on demand', async () => {
+  const calls: string[] = []
+  const model = useChunkFeedbackGovernance({
+    kbId: 'kb-1',
+    api: {
+      list: async () => ({ success: true, data: { total: 0, page: 1, page_size: 20, data: [] } }),
+      detail: async (_kbId, chunkId) => {
+        calls.push(`detail:${chunkId}`)
+        return { success: true, data: detail }
+      },
+      logs: async (_kbId, chunkId, page) => {
+        calls.push(`logs:${chunkId}:${page}`)
+        return { success: true, data: { total: 1, page: 1, page_size: 20, data: [log] } }
+      },
+      reset: async () => ({ success: true, data: detail }),
+    },
+  })
+
+  assert.equal(await model.openDetail('chunk-1'), true)
+  assert.equal(model.detailVisible.value, true)
+  assert.deepEqual(model.selected.value?.reason_counts, detail.reason_counts)
+  assert.deepEqual(model.logs.value, [log])
+  assert.deepEqual(calls, ['detail:chunk-1', 'logs:chunk-1:1'])
+})
+
+test('reset refreshes list and logs while retaining the selected detail', async () => {
+  const calls: string[] = []
+  const resetDetail = { ...detail, like_count: 0, dislike_count: 0, positive_rate: null, recall_weight: 1 }
+  const model = useChunkFeedbackGovernance({
+    kbId: 'kb-1',
+    api: {
+      list: async () => {
+        calls.push('list')
+        return { success: true, data: { total: 1, page: 1, page_size: 20, data: [resetDetail] } }
+      },
+      detail: async () => ({ success: true, data: detail }),
+      logs: async () => {
+        calls.push('logs')
+        return { success: true, data: { total: 1, page: 1, page_size: 20, data: [log] } }
+      },
+      reset: async (_kbId, chunkId, reason) => {
+        calls.push(`reset:${chunkId}:${reason}`)
+        return { success: true, data: resetDetail }
+      },
+    },
+  })
+  model.selected.value = detail
+
+  assert.equal(await model.resetSelected('  reviewed  '), true)
+  assert.equal(model.selected.value?.like_count, 0)
+  assert.deepEqual(calls, ['reset:chunk-1:reviewed', 'list', 'logs'])
+})
+
+test('failed list and reset operations preserve the visible server state', async () => {
+  const model = useChunkFeedbackGovernance({
+    kbId: 'kb-1',
+    api: {
+      list: async () => { throw new Error('list unavailable') },
+      detail: async () => ({ success: true, data: detail }),
+      logs: async () => ({ success: true, data: { total: 0, page: 1, page_size: 20, data: [] } }),
+      reset: async () => { throw new Error('reset unavailable') },
+    },
+  })
+  model.items.value = [listItem]
+  model.selected.value = detail
+
+  assert.equal(await model.loadList(), false)
+  assert.deepEqual(model.items.value, [listItem])
+  assert.match(String(model.listError.value), /list unavailable/)
+  assert.equal(await model.resetSelected(), false)
+  assert.equal(model.selected.value?.like_count, detail.like_count)
+  assert.match(String(model.detailError.value), /reset unavailable/)
+})
+
+test('older list responses cannot overwrite the latest filters', async () => {
+  const firstResponse = deferred<{ data: { total: number; page: number; page_size: number; data: ChunkFeedbackListItem[] } }>()
+  const latestItem = { ...listItem, chunk_id: 'chunk-latest', content_preview: 'latest' }
+  let calls = 0
+  const model = useChunkFeedbackGovernance({
+    kbId: 'kb-1',
+    api: {
+      list: async () => {
+        calls += 1
+        if (calls === 1) return firstResponse.promise
+        return { data: { total: 1, page: 1, page_size: 20, data: [latestItem] } }
+      },
+      detail: async () => ({ data: detail }),
+      logs: async () => ({ data: { total: 0, page: 1, page_size: 20, data: [] } }),
+      reset: async () => ({ data: detail }),
+    },
+  })
+
+  const olderLoad = model.loadList()
+  model.filters.feedbackStatus = 'high'
+  assert.equal(await model.loadList(), true)
+  firstResponse.resolve({ data: { total: 1, page: 1, page_size: 20, data: [listItem] } })
+  assert.equal(await olderLoad, true)
+  assert.deepEqual(model.items.value, [latestItem])
+})
+
+test('older detail and log responses cannot overwrite the current chunk', async () => {
+  const firstDetail = deferred<{ data: ChunkFeedbackDetail }>()
+  const firstLogs = deferred<{ data: { total: number; page: number; page_size: number; data: ChunkFeedbackWeightLog[] } }>()
+  const detailTwo = { ...detail, chunk_id: 'chunk-2', content: 'second chunk' }
+  const logTwo = { ...log, id: 'log-2', source_action: 'like' }
+  let detailCalls = 0
+  let logCalls = 0
+  const model = useChunkFeedbackGovernance({
+    kbId: 'kb-1',
+    api: {
+      list: async () => ({ data: { total: 0, page: 1, page_size: 20, data: [] } }),
+      detail: async () => {
+        detailCalls += 1
+        return detailCalls === 1 ? firstDetail.promise : { data: detailTwo }
+      },
+      logs: async (_kbID, chunkID, page) => {
+        logCalls += 1
+        if (logCalls === 1 && chunkID === 'chunk-2') return firstLogs.promise
+        return { data: { total: 1, page: page || 1, page_size: 20, data: [logTwo] } }
+      },
+      reset: async () => ({ data: detailTwo }),
+    },
+  })
+
+  const olderDetail = model.openDetail('chunk-1')
+  const latestDetail = model.openDetail('chunk-2')
+  firstDetail.resolve({ data: detail })
+  firstLogs.resolve({ data: { total: 1, page: 1, page_size: 20, data: [log] } })
+  assert.equal(await olderDetail, true)
+  assert.equal(await latestDetail, true)
+  assert.equal(model.selected.value?.chunk_id, 'chunk-2')
+  assert.deepEqual(model.logs.value, [log])
+
+  const olderLogs = deferred<{ data: { total: number; page: number; page_size: number; data: ChunkFeedbackWeightLog[] } }>()
+  let paginationCalls = 0
+  const paginationModel = useChunkFeedbackGovernance({
+    kbId: 'kb-1',
+    api: {
+      list: async () => ({ data: { total: 0, page: 1, page_size: 20, data: [] } }),
+      detail: async () => ({ data: detail }),
+      logs: async (_kbID, _chunkID, page) => {
+        paginationCalls += 1
+        if (paginationCalls === 1) return olderLogs.promise
+        return { data: { total: 1, page: page || 1, page_size: 20, data: [logTwo] } }
+      },
+      reset: async () => ({ data: detail }),
+    },
+  })
+  paginationModel.selected.value = detail
+  const olderLogLoad = paginationModel.loadLogs(1)
+  assert.equal(await paginationModel.loadLogs(2), true)
+  olderLogs.resolve({ data: { total: 1, page: 1, page_size: 20, data: [log] } })
+  assert.equal(await olderLogLoad, true)
+  assert.equal(paginationModel.logPage.value, 2)
+  assert.deepEqual(paginationModel.logs.value, [logTwo])
+})
+
+test('reset reports a partial refresh failure without losing the successful reset', async () => {
+  const resetDetail = { ...detail, like_count: 0, dislike_count: 0, positive_rate: null, recall_weight: 1 }
+  const model = useChunkFeedbackGovernance({
+    kbId: 'kb-1',
+    api: {
+      list: async () => { throw new Error('list refresh unavailable') },
+      detail: async () => ({ data: detail }),
+      logs: async () => ({ data: { total: 0, page: 1, page_size: 20, data: [] } }),
+      reset: async () => ({ data: resetDetail }),
+    },
+  })
+  model.selected.value = detail
+
+  assert.equal(await model.resetSelected(), true)
+  assert.equal(model.selected.value?.like_count, 0)
+  assert.equal(model.resetRefreshFailed.value, true)
+  assert.match(String(model.listError.value), /list refresh unavailable/)
+})

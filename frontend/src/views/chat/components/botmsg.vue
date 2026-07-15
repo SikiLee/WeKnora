@@ -46,6 +46,9 @@
                     :title="$t('agent.addToKnowledgeBase')">
                     <t-icon name="bookmark-add" />
                 </t-button>
+                <AnswerFeedbackControls v-if="!embeddedMode" :session-id="sessionId" :message-id="session.id || ''"
+                    :completed="Boolean(session.is_completed)" :feedback="session.feedback"
+                    @update:feedback="handleFeedbackUpdated" />
                 <!-- Fallback 提示图标 -->
                 <t-tooltip v-if="session.is_fallback" :content="$t('chat.fallbackHint')" placement="top">
                     <t-button size="small" variant="outline" shape="round" class="fallback-icon-btn">
@@ -79,6 +82,7 @@ import deepThink from './deepThink.vue';
 import AgentStreamDisplay from './AgentStreamDisplay.vue';
 import RagPipelineProgress from './RagPipelineProgress.vue';
 import ChatRequestInfoButton from '@/components/ChatRequestInfoButton.vue';
+import AnswerFeedbackControls from '@/components/AnswerFeedbackControls.vue';
 import ChatCitationFloat from '@/components/ChatCitationFloat.vue';
 import picturePreview from '@/components/picture-preview.vue';
 import { sanitizeMarkdownHTML, safeMarkdownToHTML, createSafeImage, isValidImageURL, hydrateProtectedFileImages } from '@/utils/security';
@@ -164,6 +168,10 @@ const props = defineProps({
 });
 
 const showRequestInfo = computed(() => !!(props.session?.request_id || props.session?.id));
+
+const handleFeedbackUpdated = (feedback) => {
+    if (props.session) props.session.feedback = feedback;
+};
 
 const preview = (url) => {
     nextTick(() => {

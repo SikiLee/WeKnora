@@ -31,6 +31,7 @@ func TestConversationRoutesDeclareChatCapability(t *testing.T) {
 		{http.MethodPost, "/api/v1/knowledge-chat/:session_id"},
 		{http.MethodPost, "/api/v1/agent-chat/:session_id"},
 		{http.MethodGet, "/api/v1/messages/:session_id/load"},
+		{http.MethodPut, "/api/v1/messages/:session_id/:message_id/feedback"},
 		{http.MethodDelete, "/api/v1/messages/:session_id/:id"},
 	}
 

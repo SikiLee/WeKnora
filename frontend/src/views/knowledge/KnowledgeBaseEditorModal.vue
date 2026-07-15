@@ -428,6 +428,11 @@
                 <div v-if="mode === 'edit' && kbId && canViewActivity && currentSection === 'activity'" class="section">
                   <KnowledgeBaseActivitySettings :kb-id="kbId" :active="currentSection === 'activity'" />
                 </div>
+
+                <div v-if="mode === 'edit' && kbId && canGovernFeedback && currentSection === 'feedbackQuality'"
+                  class="section">
+                  <ChunkFeedbackGovernance :kb-id="kbId" />
+                </div>
               </div>
 
               <!-- 保存按钮 -->
@@ -473,6 +478,8 @@ import GraphSettings from './settings/GraphSettings.vue'
 import KBShareSettings from './settings/KBShareSettings.vue'
 import DataSourceSettings from './settings/DataSourceSettings.vue'
 import KnowledgeBaseActivitySettings from './settings/KnowledgeBaseActivitySettings.vue'
+import ChunkFeedbackGovernance from './settings/ChunkFeedbackGovernance.vue'
+import { canGovernChunkFeedback } from '@/composables/useChunkFeedbackGovernance'
 import { useI18n } from 'vue-i18n'
 
 const uiStore = useUIStore()
@@ -549,6 +556,7 @@ const dsCount = ref(0)
 // only tenant Admin+ can mutate their share settings.
 const kbCreatorId = ref<string>('')
 const kbTenantId = ref<number>(0)
+const kbVectorStoreSource = ref<string>('')
 
 // Backend gate for /knowledge-bases/:id/shares (POST/PUT/DELETE) is
 // g.OwnedKBOrAdmin(): only the KB creator or tenant Admin+ may mutate
@@ -571,6 +579,22 @@ const canViewActivity = computed(() => {
   if (props.mode !== 'edit' || !props.kbId) return false
   if (Number(kbTenantId.value || 0) !== Number(authStore.currentTenantId || 0)) return false
   return isKbOwner.value || authStore.hasRole('admin')
+})
+
+const currentPersistedMembership = computed(() => {
+  const tenantId = authStore.effectiveTenantId
+  if (!tenantId) return undefined
+  return authStore.memberships.find((membership) => String(membership.tenant_id) === String(tenantId))
+})
+
+const canGovernFeedback = computed(() => {
+  if (!props.kbId) return false
+  return canGovernChunkFeedback({
+    vectorStoreSource: kbVectorStoreSource.value,
+    role: currentPersistedMembership.value?.role,
+    creatorId: kbCreatorId.value,
+    userId: authStore.user?.id || '',
+  })
 })
 // 用户是否在分块设置中手动改过任何值。一旦为 true，就不再根据索引策略自动调整默认分块参数。
 const chunkingDirty = ref(false)
@@ -624,6 +648,9 @@ const navItems = computed(() => {
   if (canViewActivity.value) {
     items.push({ key: 'activity', icon: 'history', label: t('knowledgeEditor.sidebar.activity') })
   }
+  if (props.mode === 'edit' && props.kbId && canGovernFeedback.value) {
+    items.push({ key: 'feedbackQuality', icon: 'chart-analytics', label: t('feedback.governance.navLabel') })
+  }
   return items
 })
 
@@ -646,7 +673,7 @@ const navGroups = computed(() => {
     {
       key: 'data',
       label: t('knowledgeEditor.navGroups.data'),
-      items: pickItems(['storage', 'datasource']),
+      items: pickItems(['storage', 'datasource', 'feedbackQuality']),
     },
     {
       key: 'integration',
@@ -829,6 +856,7 @@ const loadKBData = async () => {
     hasFiles.value = (filesResult as any)?.total > 0
     kbCreatorId.value = (kb as any).creator_id || ''
     kbTenantId.value = Number((kb as any).tenant_id || 0)
+    kbVectorStoreSource.value = kb.vector_store_source || ''
 
     // 设置表单数据
     const kbType = (kb.type as 'document' | 'faq') || 'document'
@@ -1497,6 +1525,7 @@ const resetState = () => {
   chunkingDirty.value = false
   kbCreatorId.value = ''
   kbTenantId.value = 0
+  kbVectorStoreSource.value = ''
 }
 
 // 关闭弹窗
@@ -1937,6 +1966,75 @@ watch(
   justify-content: flex-end;
   gap: 12px;
   flex-shrink: 0;
+}
+
+@media (max-width: 768px) {
+  .settings-overlay {
+    align-items: stretch;
+  }
+
+  .settings-modal {
+    width: 100vw;
+    max-width: none;
+    height: 100dvh;
+    max-height: none;
+    border-radius: 0;
+  }
+
+  .close-btn {
+    top: 10px;
+    right: 12px;
+  }
+
+  .settings-container {
+    flex-direction: column;
+  }
+
+  .settings-sidebar {
+    width: 100%;
+    height: auto;
+    border-right: 0;
+    border-bottom: 1px solid var(--td-component-stroke);
+  }
+
+  .sidebar-header {
+    padding: 12px 52px 10px 16px;
+  }
+
+  .settings-nav {
+    display: flex;
+    flex: 0 0 auto;
+    gap: 4px;
+    padding: 8px 12px;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+
+  .nav-group-title {
+    display: none;
+  }
+
+  .nav-item {
+    flex: 0 0 auto;
+    margin-bottom: 0;
+    padding: 6px 10px;
+  }
+
+  .nav-label {
+    white-space: nowrap;
+  }
+
+  .settings-content {
+    min-height: 0;
+  }
+
+  .content-wrapper {
+    padding: 20px 16px;
+  }
+
+  .settings-footer {
+    padding: 12px 16px;
+  }
 }
 
 // 过渡动画
