@@ -291,11 +291,20 @@ func (r *chunkRepository) ListChunksByParentIDs(
 	return chunks, nil
 }
 
-// UpdateChunk updates a chunk using GORM Save, which updates ALL fields
-// except SeqID (auto-increment, must not be overwritten).
+// UpdateChunk updates a chunk using GORM Save, which updates all non-feedback
+// fields except SeqID (auto-increment, must not be overwritten).
 // Make sure the chunk object is complete (e.g., fetched from DB) before calling this method.
 func (r *chunkRepository) UpdateChunk(ctx context.Context, chunk *types.Chunk) error {
-	return r.db.WithContext(ctx).Omit("SeqID").Save(chunk).Error
+	return r.db.WithContext(ctx).Omit(
+		"SeqID",
+		"LikeCount",
+		"DislikeCount",
+		"PositiveRate",
+		"RecallWeight",
+		"NeedsOptimization",
+		"FeedbackResetAt",
+		"FeedbackUpdatedAt",
+	).Save(chunk).Error
 }
 
 // SaveChunks persists full chunk objects in a single transaction using GORM Save (UPDATE).

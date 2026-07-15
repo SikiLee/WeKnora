@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/google/uuid"
@@ -299,4 +300,55 @@ func TestListRecentDocumentChunksWithQuestions_UnionsExplicitKBAndKnowledge(t *t
 	require.NoError(t, err)
 	require.Len(t, got, 2)
 	assert.ElementsMatch(t, []string{fromExplicitKB.ID, fromExplicitDocument.ID}, []string{got[0].ID, got[1].ID})
+}
+
+func TestUpdateChunk_SQLite_PreservesFeedbackAggregatesFromConcurrentUpdate(t *testing.T) {
+	db := setupChunkTestDB(t)
+	repo := NewChunkRepository(db)
+	ctx := context.Background()
+
+	kbID := uuid.New().String()
+	knowledgeID := uuid.New().String()
+
+	chunk := makeChunk(kbID, knowledgeID, "faq")
+	require.NoError(t, db.WithContext(ctx).Create(chunk).Error)
+
+	var stale types.Chunk
+	require.NoError(t, db.WithContext(ctx).First(&stale, "id = ?", chunk.ID).Error)
+
+	resetAt := time.Unix(1700000000, 0).UTC()
+	updatedAt := resetAt.Add(time.Minute)
+	require.NoError(t, db.WithContext(ctx).Model(&types.Chunk{}).
+		Where("id = ?", chunk.ID).
+		Updates(map[string]any{
+			"like_count":          int64(7),
+			"dislike_count":       int64(3),
+			"positive_rate":       0.7,
+			"recall_weight":       1.2,
+			"needs_optimization":  true,
+			"feedback_reset_at":   resetAt,
+			"feedback_updated_at": updatedAt,
+		}).Error)
+
+	stale.Content = "content from stale editor"
+	stale.RecallWeight = 0
+	stale.LikeCount = 0
+	stale.DislikeCount = 0
+	stale.PositiveRate = nil
+	stale.NeedsOptimization = false
+	stale.FeedbackResetAt = nil
+	stale.FeedbackUpdatedAt = nil
+	require.NoError(t, repo.UpdateChunk(ctx, &stale))
+
+	var saved types.Chunk
+	require.NoError(t, db.WithContext(ctx).First(&saved, "id = ?", chunk.ID).Error)
+	require.Equal(t, "content from stale editor", saved.Content)
+	require.Equal(t, int64(7), saved.LikeCount)
+	require.Equal(t, int64(3), saved.DislikeCount)
+	require.NotNil(t, saved.PositiveRate)
+	require.Equal(t, 0.7, *saved.PositiveRate)
+	require.Equal(t, 1.2, saved.RecallWeight)
+	require.True(t, saved.NeedsOptimization)
+	require.NotNil(t, saved.FeedbackResetAt)
+	require.NotNil(t, saved.FeedbackUpdatedAt)
 }

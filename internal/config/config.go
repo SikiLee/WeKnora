@@ -17,22 +17,23 @@ import (
 
 // Config 应用程序总配置
 type Config struct {
-	Conversation    *ConversationConfig    `yaml:"conversation"     json:"conversation"`
-	Server          *ServerConfig          `yaml:"server"           json:"server"`
-	KnowledgeBase   *KnowledgeBaseConfig   `yaml:"knowledge_base"   json:"knowledge_base"`
-	Tenant          *TenantConfig          `yaml:"tenant"           json:"tenant"`
-	Auth            *AuthConfig            `yaml:"auth"             json:"auth"`
-	Audit           *AuditConfig           `yaml:"audit"            json:"audit"`
-	OIDCAuth        *OIDCAuthConfig        `yaml:"oidc_auth"        json:"oidc_auth"`
-	Models          []ModelConfig          `yaml:"models"           json:"models"`
-	VectorDatabase  *VectorDatabaseConfig  `yaml:"vector_database"  json:"vector_database"`
-	DocReader       *DocReaderConfig       `yaml:"docreader"        json:"docreader"`
-	StreamManager   *StreamManagerConfig   `yaml:"stream_manager"   json:"stream_manager"`
-	ExtractManager  *ExtractManagerConfig  `yaml:"extract"          json:"extract"`
-	WebSearch       *WebSearchConfig       `yaml:"web_search"       json:"web_search"`
-	PromptTemplates *PromptTemplatesConfig `yaml:"prompt_templates" json:"prompt_templates"`
-	IM              *IMConfig              `yaml:"im"               json:"im"`
-	Agent           *AgentConfig           `yaml:"agent"            json:"agent"`
+	Conversation    *ConversationConfig        `yaml:"conversation"     json:"conversation"`
+	Feedback        *types.ChunkFeedbackConfig `yaml:"feedback"         json:"feedback"`
+	Server          *ServerConfig              `yaml:"server"           json:"server"`
+	KnowledgeBase   *KnowledgeBaseConfig       `yaml:"knowledge_base"   json:"knowledge_base"`
+	Tenant          *TenantConfig              `yaml:"tenant"           json:"tenant"`
+	Auth            *AuthConfig                `yaml:"auth"             json:"auth"`
+	Audit           *AuditConfig               `yaml:"audit"            json:"audit"`
+	OIDCAuth        *OIDCAuthConfig            `yaml:"oidc_auth"        json:"oidc_auth"`
+	Models          []ModelConfig              `yaml:"models"           json:"models"`
+	VectorDatabase  *VectorDatabaseConfig      `yaml:"vector_database"  json:"vector_database"`
+	DocReader       *DocReaderConfig           `yaml:"docreader"        json:"docreader"`
+	StreamManager   *StreamManagerConfig       `yaml:"stream_manager"   json:"stream_manager"`
+	ExtractManager  *ExtractManagerConfig      `yaml:"extract"          json:"extract"`
+	WebSearch       *WebSearchConfig           `yaml:"web_search"       json:"web_search"`
+	PromptTemplates *PromptTemplatesConfig     `yaml:"prompt_templates" json:"prompt_templates"`
+	IM              *IMConfig                  `yaml:"im"               json:"im"`
+	Agent           *AgentConfig               `yaml:"agent"            json:"agent"`
 	// FrontendBaseURL is the externally-visible origin of the SPA, used
 	// to compose absolute share-link URLs. Empty falls back to a host-
 	// relative URL ("/register?token=…") which the SPA then resolves
@@ -580,6 +581,7 @@ func LoadConfig() (*Config, error) {
 	applyOIDCEnvOverrides(&cfg)
 	applyAgentEnvOverrides(&cfg)
 	applyKnowledgeBaseEnvOverrides(&cfg)
+	applyFeedbackDefaultsAndEnvOverrides(&cfg)
 	applyAuthAndTenantDefaults(&cfg)
 	applyAuditDefaults(&cfg)
 
@@ -642,6 +644,12 @@ func ValidateConfig(cfg *Config) error {
 	if cfg.Audit != nil && cfg.Audit.RetentionDays < 0 {
 		errs = append(errs, fmt.Sprintf("audit.retention_days must be >= 0 (got %d); use 0 to disable purge",
 			cfg.Audit.RetentionDays))
+	}
+
+	if cfg.Feedback != nil {
+		if err := cfg.Feedback.Validate(); err != nil {
+			errs = append(errs, err.Error())
+		}
 	}
 
 	if cfg.Conversation != nil {
@@ -788,6 +796,32 @@ func applyAgentEnvOverrides(cfg *Config) {
 			cfg.Agent.ToolApprovalTimeoutSeconds = int(d.Seconds())
 		}
 	}
+}
+
+func applyFeedbackDefaultsAndEnvOverrides(cfg *Config) {
+	if cfg.Feedback == nil {
+		cfg.Feedback = types.DefaultChunkFeedbackConfig()
+	}
+
+	applyFeedbackFloatEnv("WEKNORA_FEEDBACK_HIGH_RATE_THRESHOLD", &cfg.Feedback.HighRateThreshold)
+	applyFeedbackFloatEnv("WEKNORA_FEEDBACK_LOW_RATE_THRESHOLD", &cfg.Feedback.LowRateThreshold)
+	applyFeedbackFloatEnv("WEKNORA_FEEDBACK_OPTIMIZATION_THRESHOLD", &cfg.Feedback.OptimizationThreshold)
+	applyFeedbackFloatEnv("WEKNORA_FEEDBACK_HIGH_RECALL_WEIGHT", &cfg.Feedback.HighRecallWeight)
+	applyFeedbackFloatEnv("WEKNORA_FEEDBACK_NORMAL_RECALL_WEIGHT", &cfg.Feedback.NormalRecallWeight)
+	applyFeedbackFloatEnv("WEKNORA_FEEDBACK_LOW_RECALL_WEIGHT", &cfg.Feedback.LowRecallWeight)
+}
+
+func applyFeedbackFloatEnv(name string, target *float64) {
+	value := strings.TrimSpace(os.Getenv(name))
+	if value == "" {
+		return
+	}
+	parsed, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		fmt.Printf("[config] %s=%q is not a float, ignoring\n", name, value)
+		return
+	}
+	*target = parsed
 }
 
 // applyAuthAndTenantDefaults fills in defaults for the Auth and Tenant

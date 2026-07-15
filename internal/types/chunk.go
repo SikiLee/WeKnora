@@ -156,6 +156,14 @@ type Chunk struct {
 	ContentHash string `json:"content_hash"             gorm:"type:varchar(64);index"`
 	// 图片信息，存储为 JSON
 	ImageInfo string `json:"image_info"               gorm:"type:text"`
+	// Feedback aggregate fields used to bias future recall.
+	LikeCount         int64      `json:"-" gorm:"default:0"`
+	DislikeCount      int64      `json:"-" gorm:"default:0"`
+	PositiveRate      *float64   `json:"-"`
+	RecallWeight      float64    `json:"-" gorm:"default:1"`
+	NeedsOptimization bool       `json:"-" gorm:"default:false"`
+	FeedbackResetAt   *time.Time `json:"-"`
+	FeedbackUpdatedAt *time.Time `json:"-"`
 	// Chunk creation time
 	CreatedAt time.Time `json:"created_at"`
 	// Chunk last update time
