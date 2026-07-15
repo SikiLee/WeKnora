@@ -558,6 +558,8 @@ const dsCount = ref(0)
 const kbCreatorId = ref<string>('')
 const kbTenantId = ref<number>(0)
 const kbVectorStoreSource = ref<string>('')
+const kbPermission = ref<string>('')
+const kbAccessResolved = ref(false)
 
 // Backend gate for /knowledge-bases/:id/shares (POST/PUT/DELETE) is
 // g.OwnedKBOrAdmin(): only the KB creator or tenant Admin+ may mutate
@@ -591,8 +593,10 @@ const currentPersistedMembership = computed(() => {
 const canGovernFeedback = computed(() => {
   if (!props.kbId) return false
   return canGovernChunkFeedback({
+    accessResolved: kbAccessResolved.value,
     vectorStoreSource: kbVectorStoreSource.value,
     role: currentPersistedMembership.value?.role,
+    permission: kbPermission.value,
     creatorId: kbCreatorId.value,
     userId: authStore.user?.id || '',
   })
@@ -858,6 +862,8 @@ const loadKBData = async () => {
     kbCreatorId.value = (kb as any).creator_id || ''
     kbTenantId.value = Number((kb as any).tenant_id || 0)
     kbVectorStoreSource.value = kb.vector_store_source || ''
+    kbPermission.value = (kb as any).my_permission || ''
+    kbAccessResolved.value = true
 
     // 设置表单数据
     const kbType = (kb.type as 'document' | 'faq') || 'document'
@@ -1527,6 +1533,8 @@ const resetState = () => {
   kbCreatorId.value = ''
   kbTenantId.value = 0
   kbVectorStoreSource.value = ''
+  kbPermission.value = ''
+  kbAccessResolved.value = false
 }
 
 // 关闭弹窗

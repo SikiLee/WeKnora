@@ -14,17 +14,27 @@ type GovernanceAPI = {
 }
 
 export function canGovernChunkFeedback(input: {
+  accessResolved: boolean
   vectorStoreSource?: string
   role?: string
+  permission?: string
   creatorId?: string
   userId?: string
 }) {
-  if (input.vectorStoreSource === 'shared') return false
+  if (!input.accessResolved) return false
   const roleLevel = { viewer: 10, contributor: 20, admin: 30, owner: 40 }[
     String(input.role || '').toLowerCase() as 'viewer' | 'contributor' | 'admin' | 'owner'
   ] || 0
-  if (roleLevel >= 30) return true
-  return roleLevel >= 20 && Boolean(input.creatorId && input.userId && input.creatorId === input.userId)
+  if (input.vectorStoreSource !== 'shared') {
+    if (roleLevel >= 20) return true
+    return roleLevel === 0 && Boolean(
+      input.creatorId && input.userId && input.creatorId === input.userId,
+    )
+  }
+  const permissionLevel = { viewer: 10, editor: 20, admin: 30, owner: 40 }[
+    String(input.permission || '').toLowerCase() as 'viewer' | 'editor' | 'admin' | 'owner'
+  ] || 0
+  return roleLevel >= 20 && permissionLevel >= 20
 }
 
 export function useChunkFeedbackGovernance(options: {

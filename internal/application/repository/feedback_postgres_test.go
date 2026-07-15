@@ -318,6 +318,17 @@ func TestFeedbackRepositoryPostgresGovernanceQueriesAndReset(t *testing.T) {
 	}).Error; err != nil {
 		t.Fatalf("insert reference: %v", err)
 	}
+	unratedQuery := &types.ChunkFeedbackListQuery{FeedbackStatus: types.ChunkFeedbackStatusUnrated}
+	if err := unratedQuery.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	unratedItems, unratedTotal, err := repo.ListChunkFeedback(ctx, 9, "kb-1", unratedQuery, cfg)
+	if err != nil {
+		t.Fatalf("list unrated governance: %v", err)
+	}
+	if unratedTotal != 1 || len(unratedItems) != 1 || unratedItems[0].SessionCount != 1 {
+		t.Fatalf("unrated list total=%d items=%#v", unratedTotal, unratedItems)
+	}
 	if _, err := repo.ApplyMessageFeedback(ctx, types.MessageFeedbackMutation{
 		SessionTenantID: 1,
 		UserID:          "user-1",
@@ -368,7 +379,7 @@ func TestFeedbackRepositoryPostgresGovernanceQueriesAndReset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("detail after reset: %v", err)
 	}
-	if detail.LikeCount != 0 || detail.DislikeCount != 0 || detail.SessionCount != 0 || len(detail.ReasonCounts) != 0 {
+	if detail.LikeCount != 0 || detail.DislikeCount != 0 || detail.SessionCount != 1 || len(detail.ReasonCounts) != 0 {
 		t.Fatalf("detail after reset=%#v", detail)
 	}
 	logs, logTotal, err := repo.ListChunkFeedbackWeightLogs(

@@ -293,10 +293,9 @@ func RequireOwnershipOrRole(min types.TenantRole, lookup CreatorLookup, cfg *con
 	}
 }
 
-// RequireKBFeedbackGovernance applies the narrower governance matrix after a
-// KB feedback access guard has resolved the target. Only the creator or a
-// tenant Admin may inspect or reset governance data; API keys and shared KB
-// members are deliberately excluded.
+// RequireKBFeedbackGovernance applies the governance matrix after a KB
+// feedback access guard has resolved the target. KB editors, the creator, and
+// verified source-tenant admins may inspect or reset governance data.
 func RequireKBFeedbackGovernance(cfg *config.Config) gin.HandlerFunc {
 	warnOnNilConfig(cfg)
 	return func(c *gin.Context) {
@@ -309,19 +308,23 @@ func RequireKBFeedbackGovernance(cfg *config.Config) gin.HandlerFunc {
 		}
 		access, ok := KBAccessFromContext(c)
 		if ok && access != nil && access.KnowledgeBase != nil {
-			if access.KnowledgeBase.TenantID != access.CallerTenantID {
-				_ = c.Error(apperrors.NewNotFoundError("knowledge base not found"))
-				c.Abort()
-				return
-			}
 			role := types.TenantRoleFromContext(ctx)
 			uid, _ := types.UserIDFromContext(ctx)
-			isCreator := role.HasPermission(types.TenantRoleContributor) &&
+			isSourceTenant := access.KnowledgeBase.TenantID == access.CallerTenantID
+			isCreator := isSourceTenant && role.HasPermission(types.TenantRoleContributor) &&
 				access.KnowledgeBase.CreatorID != "" && access.KnowledgeBase.CreatorID == uid
-			isVerifiedAdmin := role.HasPermission(types.TenantRoleAdmin) &&
+			isVerifiedAdmin := isSourceTenant && role.HasPermission(types.TenantRoleAdmin) &&
 				types.IsTenantRoleVerifiedFromContext(ctx)
-			if isCreator || isVerifiedAdmin {
+			isEditor := types.IsTenantRoleVerifiedFromContext(ctx) &&
+				role.HasPermission(types.TenantRoleContributor) &&
+				access.Permission.HasPermission(types.OrgRoleEditor)
+			if isCreator || isVerifiedAdmin || isEditor {
 				c.Next()
+				return
+			}
+			if !isSourceTenant {
+				_ = c.Error(apperrors.NewNotFoundError("knowledge base not found"))
+				c.Abort()
 				return
 			}
 		}

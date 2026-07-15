@@ -34,7 +34,7 @@ func TestRequireKBFeedbackGovernanceMatrix(t *testing.T) {
 		},
 		{
 			name: "own KB non-creator contributor", role: types.TenantRoleContributor, userID: "other",
-			access: ownFeedbackKBAccess("creator"), wantStatus: http.StatusForbidden,
+			verified: true, access: ownFeedbackKBAccess("creator"), wantStatus: http.StatusNoContent,
 		},
 		{
 			name: "own KB creator demoted to viewer", role: types.TenantRoleViewer, userID: "creator",
@@ -42,7 +42,7 @@ func TestRequireKBFeedbackGovernanceMatrix(t *testing.T) {
 		},
 		{
 			name: "shared KB editor", role: types.TenantRoleContributor, userID: "editor",
-			access: sharedFeedbackKBAccess(types.OrgRoleEditor), wantStatus: http.StatusNotFound,
+			verified: true, access: sharedFeedbackKBAccess(types.OrgRoleEditor), wantStatus: http.StatusNoContent,
 		},
 		{
 			name: "shared KB viewer", role: types.TenantRoleAdmin, userID: "viewer",
@@ -86,6 +86,51 @@ func TestRequireKBFeedbackGovernanceMatrix(t *testing.T) {
 				t.Fatalf("status=%d want=%d body=%s", w.Code, tc.wantStatus, w.Body.String())
 			}
 		})
+	}
+}
+
+func TestRequireKBFeedbackGovernanceAllowsSharedEditorThroughAccessChain(t *testing.T) {
+	enabled := true
+	cfg := &config.Config{Tenant: &config.TenantConfig{EnableRBAC: &enabled}}
+	lookup := &stubKBLookup{kbs: map[string]*types.KnowledgeBase{
+		"kb-shared": {ID: "kb-shared", TenantID: 2, CreatorID: "source-owner"},
+	}}
+	share := &stubKBShareForGuard{
+		permission: map[string]types.OrgMemberRole{"kb-shared": types.OrgRoleEditor},
+		shared:     map[string]bool{"kb-shared": true},
+		source:     map[string]uint64{"kb-shared": 2},
+	}
+
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(ErrorHandler())
+	r.Use(func(c *gin.Context) {
+		ctx := context.WithValue(c.Request.Context(), types.TenantIDContextKey, uint64(1))
+		ctx = context.WithValue(ctx, types.UserIDContextKey, "editor")
+		ctx = context.WithValue(ctx, types.TenantRoleContextKey, types.TenantRoleContributor)
+		ctx = context.WithValue(ctx, types.TenantRoleVerifiedContextKey, true)
+		c.Request = c.Request.WithContext(ctx)
+		c.Next()
+	})
+	r.GET(
+		"/knowledge-bases/:id/chunk-feedback",
+		RequireKBFeedbackAccess(KBIDFromParam("id"), types.OrgRoleEditor, lookup, share, nil, cfg),
+		RequireKBFeedbackGovernance(cfg),
+		func(c *gin.Context) {
+			tenantID, _ := types.TenantIDFromContext(c.Request.Context())
+			if tenantID != 2 {
+				t.Fatalf("effective tenant=%d want=2", tenantID)
+			}
+			c.Status(http.StatusNoContent)
+		},
+	)
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(
+		http.MethodGet, "/knowledge-bases/kb-shared/chunk-feedback", nil,
+	))
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status=%d want=%d body=%s", w.Code, http.StatusNoContent, w.Body.String())
 	}
 }
 

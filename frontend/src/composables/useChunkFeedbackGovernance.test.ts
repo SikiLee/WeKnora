@@ -45,14 +45,30 @@ const log: ChunkFeedbackWeightLog = {
   created_at: '2026-07-15T08:30:00Z',
 }
 
-test('governance visibility mirrors role, ownership, and shared-KB restrictions', () => {
-  const base = { vectorStoreSource: 'user', creatorId: 'user-1', userId: 'user-1' }
+test('governance visibility mirrors tenant and shared editor permissions', () => {
+  const base = { accessResolved: true, vectorStoreSource: 'user' }
+  assert.equal(canGovernChunkFeedback({
+    ...base, accessResolved: false, role: 'contributor',
+  }), false)
   assert.equal(canGovernChunkFeedback({ ...base, role: 'owner' }), true)
   assert.equal(canGovernChunkFeedback({ ...base, role: 'admin' }), true)
   assert.equal(canGovernChunkFeedback({ ...base, role: 'contributor' }), true)
-  assert.equal(canGovernChunkFeedback({ ...base, role: 'contributor', userId: 'user-2' }), false)
   assert.equal(canGovernChunkFeedback({ ...base, role: 'viewer' }), false)
-  assert.equal(canGovernChunkFeedback({ ...base, role: 'admin', vectorStoreSource: 'shared' }), false)
+  assert.equal(canGovernChunkFeedback({
+    ...base, creatorId: 'user-1', userId: 'user-1',
+  }), true)
+  assert.equal(canGovernChunkFeedback({
+    ...base, role: 'viewer', creatorId: 'user-1', userId: 'user-1',
+  }), false)
+  assert.equal(canGovernChunkFeedback({
+    ...base, role: 'contributor', vectorStoreSource: 'shared', permission: 'editor',
+  }), true)
+  assert.equal(canGovernChunkFeedback({
+    ...base, role: 'admin', vectorStoreSource: 'shared', permission: 'viewer',
+  }), false)
+  assert.equal(canGovernChunkFeedback({
+    ...base, role: 'viewer', vectorStoreSource: 'shared', permission: 'editor',
+  }), false)
 })
 
 test('governance list sends filters, sort, and pagination to the server', async () => {

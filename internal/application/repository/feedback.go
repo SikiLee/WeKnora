@@ -490,15 +490,10 @@ func (r *feedbackRepository) ListChunkFeedback(
 		chunk.feedback_reset_at,
 		chunk.feedback_updated_at,
 		(
-			SELECT COUNT(DISTINCT feedback.session_id)
+			SELECT COUNT(DISTINCT reference.session_id)
 			FROM message_chunk_references AS reference
-			JOIN message_feedbacks AS feedback
-				ON feedback.session_tenant_id = reference.session_tenant_id
-				AND feedback.session_id = reference.session_id
-				AND feedback.message_id = reference.message_id
 			WHERE reference.chunk_tenant_id = chunk.tenant_id
 				AND reference.chunk_id = chunk.id
-				AND (chunk.feedback_reset_at IS NULL OR feedback.feedback_at > chunk.feedback_reset_at)
 		) AS session_count`
 	listQuery := base.Select(selectSQL).
 		Order(fmt.Sprintf("CASE WHEN %s IS NULL THEN 1 ELSE 0 END ASC", sortColumn)).
@@ -574,15 +569,10 @@ func getChunkFeedbackItem(
 		chunk.feedback_reset_at,
 		chunk.feedback_updated_at,
 		(
-			SELECT COUNT(DISTINCT feedback.session_id)
+			SELECT COUNT(DISTINCT reference.session_id)
 			FROM message_chunk_references AS reference
-			JOIN message_feedbacks AS feedback
-				ON feedback.session_tenant_id = reference.session_tenant_id
-				AND feedback.session_id = reference.session_id
-				AND feedback.message_id = reference.message_id
 			WHERE reference.chunk_tenant_id = chunk.tenant_id
 				AND reference.chunk_id = chunk.id
-				AND (chunk.feedback_reset_at IS NULL OR feedback.feedback_at > chunk.feedback_reset_at)
 		) AS session_count`
 	err := chunkFeedbackBaseQuery(db, tenantID, kbID).
 		Select(selectSQL).

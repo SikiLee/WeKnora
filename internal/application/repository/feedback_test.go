@@ -550,7 +550,7 @@ func TestFeedbackRepositoryGovernanceDetailLogsAndResetBaseline(t *testing.T) {
 		t.Fatalf("reset: %v", err)
 	}
 	if resetDetail.LikeCount != 0 || resetDetail.DislikeCount != 0 ||
-		resetDetail.SessionCount != 0 || len(resetDetail.ReasonCounts) != 0 {
+		resetDetail.SessionCount != 1 || len(resetDetail.ReasonCounts) != 0 {
 		t.Fatalf("reset snapshot = %#v", resetDetail)
 	}
 	resetChunk := loadFeedbackChunk(t, db, chunk.ID)
@@ -578,7 +578,7 @@ func TestFeedbackRepositoryGovernanceDetailLogsAndResetBaseline(t *testing.T) {
 	}
 	resetChunk = loadFeedbackChunk(t, db, chunk.ID)
 	if resetChunk.FeedbackResetAt == nil || !resetChunk.FeedbackResetAt.After(firstResetAt) ||
-		secondDetail.SessionCount != 0 || len(secondDetail.ReasonCounts) != 0 {
+		secondDetail.SessionCount != 1 || len(secondDetail.ReasonCounts) != 0 {
 		t.Fatalf("second reset was not monotonic: first=%v chunk=%#v detail=%#v", firstResetAt, resetChunk, secondDetail)
 	}
 	if err := db.Model(&types.MessageFeedback{}).Count(&feedbackCount).Error; err != nil {
@@ -594,7 +594,7 @@ func TestFeedbackRepositoryGovernanceDetailLogsAndResetBaseline(t *testing.T) {
 	if err != nil {
 		t.Fatalf("detail after reset: %v", err)
 	}
-	if detail.SessionCount != 0 || len(detail.ReasonCounts) != 0 {
+	if detail.SessionCount != 1 || len(detail.ReasonCounts) != 0 {
 		t.Fatalf("pre-reset data remained active: %#v", detail)
 	}
 	logs, total, err := repo.ListChunkFeedbackWeightLogs(
@@ -729,15 +729,53 @@ func TestFeedbackRepositoryResetBaselineCoversFutureFeedback(t *testing.T) {
 	if resetChunk.FeedbackResetAt == nil || !resetChunk.FeedbackResetAt.After(future) {
 		t.Fatalf("reset baseline %v did not cover future feedback %v", resetChunk.FeedbackResetAt, future)
 	}
-	if detail.SessionCount != 0 || len(detail.ReasonCounts) != 0 {
+	if detail.SessionCount != 1 || len(detail.ReasonCounts) != 0 {
 		t.Fatalf("future feedback remained active in reset snapshot: %#v", detail)
 	}
 	after, err := repo.GetChunkFeedbackDetail(ctx, chunk.TenantID, chunk.KnowledgeBaseID, chunk.ID)
 	if err != nil {
 		t.Fatalf("detail after reset: %v", err)
 	}
-	if after.SessionCount != 0 || len(after.ReasonCounts) != 0 {
+	if after.SessionCount != 1 || len(after.ReasonCounts) != 0 {
 		t.Fatalf("future feedback remained active after reset: %#v", after)
+	}
+}
+
+func TestFeedbackRepositoryGovernanceSessionCountIncludesUnratedReferences(t *testing.T) {
+	db, repo, message, chunk := setupFeedbackRepositoryTest(t)
+	ctx := context.Background()
+	query := &types.ChunkFeedbackListQuery{FeedbackStatus: types.ChunkFeedbackStatusUnrated}
+	if err := query.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&types.MessageChunkReference{
+		SessionTenantID: 1,
+		ChunkTenantID:   chunk.TenantID,
+		SessionID:       message.SessionID,
+		MessageID:       "message-2",
+		ChunkID:         chunk.ID,
+		KnowledgeBaseID: chunk.KnowledgeBaseID,
+		KnowledgeID:     chunk.KnowledgeID,
+	}).Error; err != nil {
+		t.Fatalf("create second reference in same session: %v", err)
+	}
+
+	items, total, err := repo.ListChunkFeedback(
+		ctx, chunk.TenantID, chunk.KnowledgeBaseID, query, types.DefaultChunkFeedbackConfig(),
+	)
+	if err != nil {
+		t.Fatalf("list unrated governance: %v", err)
+	}
+	if total != 1 || len(items) != 1 || items[0].SessionCount != 1 {
+		t.Fatalf("unrated list total=%d items=%#v", total, items)
+	}
+
+	detail, err := repo.GetChunkFeedbackDetail(ctx, chunk.TenantID, chunk.KnowledgeBaseID, chunk.ID)
+	if err != nil {
+		t.Fatalf("unrated detail: %v", err)
+	}
+	if detail.SessionCount != 1 || detail.LikeCount != 0 || detail.DislikeCount != 0 {
+		t.Fatalf("unrated detail=%#v", detail)
 	}
 }
 
