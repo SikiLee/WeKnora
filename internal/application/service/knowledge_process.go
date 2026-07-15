@@ -281,6 +281,18 @@ func (s *knowledgeService) processChunks(ctx context.Context,
 		embeddingModel, err = s.modelService.GetEmbeddingModel(ctx, kb.EmbeddingModelID)
 		if err != nil {
 			logger.GetLogger(ctx).WithField("error", err).Errorf("processChunks get embedding model failed")
+			// A missing or unusable embedding model is a terminal parse failure for
+			// knowledge bases whose retrieval strategy requires embeddings.  The old
+			// early return left the document indefinitely in "processing", which made
+			// both normal operations and evaluation readiness checks ambiguous.
+			knowledge.ParseStatus = types.ParseStatusFailed
+			knowledge.ErrorMessage = fmt.Sprintf("get embedding model failed: %v", err)
+			knowledge.UpdatedAt = time.Now()
+			if updateErr := s.repo.UpdateKnowledge(ctx, knowledge); updateErr != nil {
+				logger.GetLogger(ctx).WithError(updateErr).Error("persist embedding model failure")
+			}
+			s.failStage(ctx, knowledge.ID, types.StageEmbedding,
+				werrors.ErrCodeEmbeddingProviderFail, "get embedding model failed", err)
 			return
 		}
 	} else {
