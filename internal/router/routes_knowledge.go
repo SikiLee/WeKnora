@@ -248,6 +248,26 @@ func RegisterKnowledgeBaseActivityRoutes(r *gin.RouterGroup, auditHandler *handl
 		g.OwnedKBOrAdmin(), g.KBAccessRead("id"), auditHandler.ListKnowledgeBaseActivity)
 }
 
+// RegisterChunkFeedbackRoutes mounts governance endpoints below the KB
+// namespace, away from the legacy /chunks/:knowledge_id wildcard.
+func RegisterChunkFeedbackRoutes(r *gin.RouterGroup, h *handler.ChunkFeedbackHandler, g *rbacGuards) {
+	if h == nil {
+		return
+	}
+	group := r.Group(
+		"/knowledge-bases/:id/chunk-feedback",
+		g.Contributor(),
+		g.KBFeedbackAccess("id"),
+		g.KBFeedbackGovernance(),
+	)
+	{
+		group.GET("", h.List)
+		group.GET("/:chunk_id/weight-logs", h.WeightLogs)
+		group.GET("/:chunk_id", h.Detail)
+		group.POST("/:chunk_id/reset", h.Reset)
+	}
+}
+
 // RegisterKnowledgeTagRoutes 注册知识库标签相关路由。
 //
 // Tags are KB metadata: Viewer reads, Contributor writes. Per-KB

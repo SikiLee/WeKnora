@@ -16,6 +16,7 @@ var (
 	ErrFeedbackUnauthorized      = errors.New("feedback caller is not authorized")
 	ErrFeedbackMessageNotFound   = errors.New("feedback message was not found")
 	ErrFeedbackMessageIncomplete = errors.New("only completed assistant messages can be rated")
+	ErrChunkFeedbackNotFound     = errors.New("chunk feedback target was not found")
 )
 
 const (
@@ -37,6 +38,13 @@ const (
 	ChunkFeedbackLogActionDislike = "dislike"
 	ChunkFeedbackLogActionCancel  = "cancel"
 	ChunkFeedbackLogActionReset   = "reset"
+
+	ChunkFeedbackStatusAll     = "all"
+	ChunkFeedbackStatusRated   = "rated"
+	ChunkFeedbackStatusHigh    = "high"
+	ChunkFeedbackStatusNormal  = "normal"
+	ChunkFeedbackStatusLow     = "low"
+	ChunkFeedbackStatusUnrated = "unrated"
 )
 
 // ChunkFeedbackConfig controls how answer feedback changes chunk recall weight.
@@ -235,6 +243,138 @@ type ChunkFeedbackWeightLog struct {
 func (c *ChunkFeedbackWeightLog) BeforeCreate(tx *gorm.DB) error {
 	if c.ID == "" {
 		c.ID = uuid.NewString()
+	}
+	return nil
+}
+
+// ChunkFeedbackListQuery controls the governance list. Sort fields are
+// validated before reaching the repository so they can be safely mapped to
+// fixed SQL expressions.
+type ChunkFeedbackListQuery struct {
+	Page              int    `form:"page"`
+	PageSize          int    `form:"page_size"`
+	Keyword           string `form:"keyword"`
+	FeedbackStatus    string `form:"feedback_status"`
+	NeedsOptimization *bool  `form:"needs_optimization"`
+	SortBy            string `form:"sort_by"`
+	SortOrder         string `form:"sort_order"`
+}
+
+func (q *ChunkFeedbackListQuery) Validate() error {
+	if q == nil {
+		return errors.New("chunk feedback query is required")
+	}
+	if q.Page == 0 {
+		q.Page = 1
+	}
+	if q.PageSize == 0 {
+		q.PageSize = 20
+	}
+	if err := ValidateChunkFeedbackPagination(q.Page, q.PageSize); err != nil {
+		return err
+	}
+	q.Keyword = strings.TrimSpace(q.Keyword)
+	q.FeedbackStatus = strings.ToLower(strings.TrimSpace(q.FeedbackStatus))
+	if q.FeedbackStatus == "" {
+		q.FeedbackStatus = ChunkFeedbackStatusAll
+	}
+	switch q.FeedbackStatus {
+	case ChunkFeedbackStatusAll, ChunkFeedbackStatusRated, ChunkFeedbackStatusHigh,
+		ChunkFeedbackStatusNormal, ChunkFeedbackStatusLow, ChunkFeedbackStatusUnrated:
+	default:
+		return errors.New("feedback_status must be all, rated, high, normal, low, or unrated")
+	}
+	q.SortBy = strings.ToLower(strings.TrimSpace(q.SortBy))
+	if q.SortBy == "" {
+		q.SortBy = "feedback_updated_at"
+	}
+	switch q.SortBy {
+	case "feedback_updated_at", "like_count", "dislike_count", "positive_rate", "recall_weight", "chunk_index":
+	default:
+		return errors.New("invalid chunk feedback sort_by")
+	}
+	q.SortOrder = strings.ToLower(strings.TrimSpace(q.SortOrder))
+	if q.SortOrder == "" {
+		q.SortOrder = "desc"
+	}
+	if q.SortOrder != "asc" && q.SortOrder != "desc" {
+		return errors.New("sort_order must be asc or desc")
+	}
+	return nil
+}
+
+func ValidateChunkFeedbackPagination(page, pageSize int) error {
+	if page < 1 {
+		return errors.New("page must be a positive integer")
+	}
+	if pageSize < 1 || pageSize > 100 {
+		return errors.New("page_size must be between 1 and 100")
+	}
+	maxInt := int(^uint(0) >> 1)
+	if page > 1 && page-1 > maxInt/pageSize {
+		return errors.New("page is too large")
+	}
+	return nil
+}
+
+func (q *ChunkFeedbackListQuery) Pagination() *Pagination {
+	return &Pagination{Page: q.Page, PageSize: q.PageSize}
+}
+
+// ChunkFeedbackListItem is the governance-safe projection of a chunk. It is
+// separate from Chunk because aggregate fields remain hidden on legacy APIs.
+type ChunkFeedbackListItem struct {
+	ChunkID           string     `json:"chunk_id"`
+	KnowledgeID       string     `json:"knowledge_id"`
+	KnowledgeTitle    string     `json:"knowledge_title"`
+	ChunkIndex        int        `json:"chunk_index"`
+	ChunkType         ChunkType  `json:"chunk_type"`
+	ContentPreview    string     `json:"content_preview"`
+	LikeCount         int64      `json:"like_count"`
+	DislikeCount      int64      `json:"dislike_count"`
+	SessionCount      int64      `json:"session_count"`
+	PositiveRate      *float64   `json:"positive_rate"`
+	RecallWeight      float64    `json:"recall_weight"`
+	NeedsOptimization bool       `json:"needs_optimization"`
+	FeedbackResetAt   *time.Time `json:"feedback_reset_at"`
+	FeedbackUpdatedAt *time.Time `json:"feedback_updated_at"`
+	Content           string     `json:"-"`
+}
+
+type ChunkFeedbackReasonCount struct {
+	ReasonCode string `json:"reason_code"`
+	Count      int64  `json:"count"`
+}
+
+type ChunkFeedbackDetail struct {
+	ChunkFeedbackListItem
+	Content      string                      `json:"content"`
+	ReasonCounts []*ChunkFeedbackReasonCount `json:"reason_counts"`
+}
+
+type ChunkFeedbackWeightLogItem struct {
+	ID               string    `json:"id"`
+	OldWeight        float64   `json:"old_weight"`
+	NewWeight        float64   `json:"new_weight"`
+	Source           string    `json:"source"`
+	SourceAction     string    `json:"source_action"`
+	SourceMessageID  string    `json:"source_message_id,omitempty"`
+	SourceFeedbackID string    `json:"source_feedback_id,omitempty"`
+	Reason           string    `json:"reason,omitempty"`
+	CreatedAt        time.Time `json:"created_at"`
+}
+
+type ChunkFeedbackResetInput struct {
+	Reason string `json:"reason"`
+}
+
+func (i *ChunkFeedbackResetInput) Validate() error {
+	if i == nil {
+		return nil
+	}
+	i.Reason = strings.TrimSpace(i.Reason)
+	if utf8.RuneCountInString(i.Reason) > 500 {
+		return errors.New("reset reason must not exceed 500 characters")
 	}
 	return nil
 }

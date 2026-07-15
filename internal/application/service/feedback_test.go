@@ -47,6 +47,33 @@ type failingFeedbackMessageRepository struct {
 	err error
 }
 
+type resetSnapshotFeedbackRepository struct {
+	interfaces.FeedbackRepository
+	detail          *types.ChunkFeedbackDetail
+	detailReadCalls int
+}
+
+func (r *resetSnapshotFeedbackRepository) ResetChunkFeedback(
+	context.Context,
+	uint64,
+	string,
+	string,
+	string,
+	*types.ChunkFeedbackConfig,
+) (*types.ChunkFeedbackDetail, error) {
+	return r.detail, nil
+}
+
+func (r *resetSnapshotFeedbackRepository) GetChunkFeedbackDetail(
+	context.Context,
+	uint64,
+	string,
+	string,
+) (*types.ChunkFeedbackDetail, error) {
+	r.detailReadCalls++
+	return nil, errors.New("unexpected post-commit detail read")
+}
+
 func (r failingFeedbackMessageRepository) GetMessage(context.Context, string, string) (*types.Message, error) {
 	return nil, r.err
 }
@@ -173,6 +200,34 @@ func insertServiceFeedbackMessage(t *testing.T, db *gorm.DB, message *types.Mess
 		message.IsCompleted, message.CreatedAt, message.UpdatedAt,
 	).Error; err != nil {
 		t.Fatalf("insert message: %v", err)
+	}
+}
+
+func TestFeedbackServiceResetUsesTransactionalSnapshot(t *testing.T) {
+	repo := &resetSnapshotFeedbackRepository{
+		detail: &types.ChunkFeedbackDetail{
+			ChunkFeedbackListItem: types.ChunkFeedbackListItem{ChunkID: "chunk-1"},
+			Content:               strings.Repeat("x", 210),
+			ReasonCounts:          []*types.ChunkFeedbackReasonCount{},
+		},
+	}
+	svc := service.NewFeedbackService(
+		repo,
+		nil,
+		nil,
+		nil,
+		&config.Config{Feedback: types.DefaultChunkFeedbackConfig()},
+	)
+	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(1))
+	detail, err := svc.ResetChunkFeedback(ctx, "kb-1", "chunk-1", &types.ChunkFeedbackResetInput{})
+	if err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+	if detail != repo.detail || len([]rune(detail.ContentPreview)) != 200 {
+		t.Fatalf("reset detail = %#v", detail)
+	}
+	if repo.detailReadCalls != 0 {
+		t.Fatalf("service performed %d post-commit detail reads", repo.detailReadCalls)
 	}
 }
 

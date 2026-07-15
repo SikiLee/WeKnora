@@ -239,7 +239,9 @@ func authenticateJWTUser(
 	}
 
 	// 解析当前空间内的角色 (issue #1303)
-	role, ok := resolveTenantRole(ctx, memberService, user, targetTenantID, crossTenantSwitch, cfg)
+	role, ok, roleVerified := resolveTenantRoleWithProvenance(
+		ctx, memberService, user, targetTenantID, crossTenantSwitch, cfg,
+	)
 	if !ok {
 		// 强制 RBAC 时，缺少 active membership 即拒绝；fail-open 路径已在
 		// resolveTenantRole 内部处理。
@@ -255,12 +257,13 @@ func authenticateJWTUser(
 		"[auth] resolved role=%s for user=%s in tenant=%d (jwt_tenant=%d, header=%q, cross_switch=%v)",
 		role, user.ID, targetTenantID, jwtTenantID, c.GetHeader("X-Tenant-ID"), crossTenantSwitch)
 	applyAuthSession(c, authSession{
-		User:        user,
-		Principal:   types.Principal{Type: types.PrincipalWebUser, ID: user.ID},
-		TenantID:    targetTenantID,
-		Tenant:      tenant,
-		Role:        role,
-		SystemAdmin: user.IsSystemAdmin,
+		User:         user,
+		Principal:    types.Principal{Type: types.PrincipalWebUser, ID: user.ID},
+		TenantID:     targetTenantID,
+		Tenant:       tenant,
+		Role:         role,
+		RoleVerified: roleVerified,
+		SystemAdmin:  user.IsSystemAdmin,
 	})
 	return true
 }
@@ -754,13 +757,27 @@ func resolveTenantRole(
 	crossTenantSwitch bool,
 	cfg *config.Config,
 ) (types.TenantRole, bool) {
+	role, ok, _ := resolveTenantRoleWithProvenance(
+		ctx, memberService, user, targetTenantID, crossTenantSwitch, cfg,
+	)
+	return role, ok
+}
+
+func resolveTenantRoleWithProvenance(
+	ctx context.Context,
+	memberService interfaces.TenantMemberService,
+	user *types.User,
+	targetTenantID uint64,
+	crossTenantSwitch bool,
+	cfg *config.Config,
+) (types.TenantRole, bool, bool) {
 	// 1. 正常成员关系
 	member, err := memberService.GetMembership(ctx, user.ID, targetTenantID)
 	if err == nil && member != nil && member.Status == types.TenantMemberStatusActive {
 		logger.Infof(ctx,
 			"[auth] resolveTenantRole step1 hit: user=%s tenant=%d row_role=%s row_status=%s",
 			user.ID, targetTenantID, member.Role, member.Status)
-		return member.Role, true
+		return member.Role, true, true
 	}
 	if err != nil {
 		logger.Warnf(ctx, "tenant_members lookup failed user=%s tenant=%d: %v",
@@ -786,7 +803,7 @@ func resolveTenantRole(
 		logger.Infof(ctx,
 			"[auth] resolveTenantRole step2 (cross-tenant superuser) -> Admin: user=%s tenant=%d",
 			user.ID, targetTenantID)
-		return types.TenantRoleAdmin, true
+		return types.TenantRoleAdmin, true, false
 	}
 
 	// 3. 孤儿空间自愈：仅当用户登录的是自己的 home tenant、且该空间尚无任何活跃成员时
@@ -803,7 +820,7 @@ func resolveTenantRole(
 					"[audit] Auto-promoted user %s to Owner of orphan tenant %d (home_tenant=true)",
 					user.ID, targetTenantID,
 				)
-				return types.TenantRoleOwner, true
+				return types.TenantRoleOwner, true, true
 			} else {
 				logger.Warnf(ctx, "Failed to auto-promote user %s in tenant %d: %v",
 					user.ID, targetTenantID, e)
@@ -816,11 +833,11 @@ func resolveTenantRole(
 		logger.Warnf(ctx,
 			"[auth] resolveTenantRole step4 fail-closed (EnableRBAC=true): user=%s tenant=%d",
 			user.ID, targetTenantID)
-		return "", false
+		return "", false, false
 	}
 	logger.Warnf(ctx,
 		"[auth] resolveTenantRole step4 fail-open (EnableRBAC=false) -> Admin: user=%s tenant=%d",
 		user.ID, targetTenantID)
 	// fail-open 期间保持现有行为（每个登录用户在自己空间里都是"管理员"）。
-	return types.TenantRoleAdmin, true
+	return types.TenantRoleAdmin, true, false
 }

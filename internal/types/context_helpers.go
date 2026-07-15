@@ -140,6 +140,13 @@ func TenantRoleFromContext(ctx context.Context) TenantRole {
 	return v
 }
 
+// IsTenantRoleVerifiedFromContext reports whether the current tenant role came
+// from an active, persisted membership rather than a compatibility fallback.
+func IsTenantRoleVerifiedFromContext(ctx context.Context) bool {
+	v, ok := ctx.Value(TenantRoleVerifiedContextKey).(bool)
+	return ok && v
+}
+
 // IsSystemAdminFromContext extracts the system admin flag from ctx.
 // Returns false (fail-closed) when the key is absent.
 func IsSystemAdminFromContext(ctx context.Context) bool {

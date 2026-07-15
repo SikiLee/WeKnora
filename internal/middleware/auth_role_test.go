@@ -227,6 +227,52 @@ func TestResolveTenantRole_FailOpenAdminWhenRBACDisabled(t *testing.T) {
 	}
 }
 
+func TestResolveTenantRoleProvenanceDistinguishesPersistedAndSyntheticRoles(t *testing.T) {
+	t.Run("active membership is verified", func(t *testing.T) {
+		svc := newFakeMemberService()
+		svc.seedActive("admin", 7, types.TenantRoleAdmin)
+		role, ok, verified := resolveTenantRoleWithProvenance(
+			context.Background(), svc, &types.User{ID: "admin", TenantID: 7}, 7, false, cfgWithRBAC(false),
+		)
+		if !ok || role != types.TenantRoleAdmin || !verified {
+			t.Fatalf("role=%s ok=%v verified=%v", role, ok, verified)
+		}
+	})
+
+	t.Run("fail-open Admin is not verified", func(t *testing.T) {
+		svc := newFakeMemberService()
+		svc.seedActive("other", 7, types.TenantRoleOwner)
+		role, ok, verified := resolveTenantRoleWithProvenance(
+			context.Background(), svc, &types.User{ID: "user", TenantID: 7}, 7, false, cfgWithRBAC(false),
+		)
+		if !ok || role != types.TenantRoleAdmin || verified {
+			t.Fatalf("role=%s ok=%v verified=%v", role, ok, verified)
+		}
+	})
+
+	t.Run("cross-tenant Admin is not verified", func(t *testing.T) {
+		svc := newFakeMemberService()
+		role, ok, verified := resolveTenantRoleWithProvenance(
+			context.Background(), svc,
+			&types.User{ID: "super", TenantID: 1, CanAccessAllTenants: true},
+			99, true, cfgWithRBAC(true),
+		)
+		if !ok || role != types.TenantRoleAdmin || verified {
+			t.Fatalf("role=%s ok=%v verified=%v", role, ok, verified)
+		}
+	})
+
+	t.Run("persisted orphan owner is verified", func(t *testing.T) {
+		svc := newFakeMemberService()
+		role, ok, verified := resolveTenantRoleWithProvenance(
+			context.Background(), svc, &types.User{ID: "owner", TenantID: 7}, 7, false, cfgWithRBAC(true),
+		)
+		if !ok || role != types.TenantRoleOwner || !verified || len(svc.addCalls) != 1 {
+			t.Fatalf("role=%s ok=%v verified=%v addCalls=%d", role, ok, verified, len(svc.addCalls))
+		}
+	})
+}
+
 func TestResolveTenantRole_FailClosedWhenRBACEnabled(t *testing.T) {
 	svc := newFakeMemberService()
 	// 已有其它成员，自动晋升路径关闭；RBAC 启用 → 必须 403。

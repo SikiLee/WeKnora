@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/Tencent/WeKnora/internal/config"
+	apperrors "github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/gin-gonic/gin"
@@ -288,6 +289,53 @@ func RequireOwnershipOrRole(min types.TenantRole, lookup CreatorLookup, cfg *con
 		c.JSON(http.StatusForbidden, gin.H{
 			"error": "Forbidden: must own the resource or have the required role",
 		})
+		c.Abort()
+	}
+}
+
+// RequireKBFeedbackGovernance applies the narrower governance matrix after a
+// KB feedback access guard has resolved the target. Only the creator or a
+// tenant Admin may inspect or reset governance data; API keys and shared KB
+// members are deliberately excluded.
+func RequireKBFeedbackGovernance(cfg *config.Config) gin.HandlerFunc {
+	warnOnNilConfig(cfg)
+	return func(c *gin.Context) {
+		ctx := c.Request.Context()
+		if _, ok := types.TenantAPIKeyScopeFromContext(ctx); ok {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+				"error": "Forbidden: API keys cannot access this endpoint",
+			})
+			return
+		}
+		access, ok := KBAccessFromContext(c)
+		if ok && access != nil && access.KnowledgeBase != nil {
+			if access.KnowledgeBase.TenantID != access.CallerTenantID {
+				_ = c.Error(apperrors.NewNotFoundError("knowledge base not found"))
+				c.Abort()
+				return
+			} else {
+				role := types.TenantRoleFromContext(ctx)
+				uid, _ := types.UserIDFromContext(ctx)
+				isCreator := role.HasPermission(types.TenantRoleContributor) &&
+					access.KnowledgeBase.CreatorID != "" && access.KnowledgeBase.CreatorID == uid
+				isVerifiedAdmin := role.HasPermission(types.TenantRoleAdmin) &&
+					types.IsTenantRoleVerifiedFromContext(ctx)
+				if isCreator || isVerifiedAdmin {
+					c.Next()
+					return
+				}
+			}
+		}
+		uid, _ := types.UserIDFromContext(ctx)
+		callerTenantID := uint64(0)
+		if access != nil {
+			callerTenantID = access.CallerTenantID
+		}
+		logger.Warnf(ctx, "[rbac] chunk feedback governance denied: user=%s tenant=%d path=%s", uid, callerTenantID, c.Request.URL.Path)
+		if svc := AuditServiceFromContext(c); svc != nil {
+			_ = svc.LogDenied(ctx, c, callerTenantID, uid, string(types.TenantRoleFromContext(ctx)), "kb_feedback_governance")
+		}
+		c.JSON(http.StatusForbidden, gin.H{"error": "Forbidden: cannot govern feedback for this knowledge base"})
 		c.Abort()
 	}
 }

@@ -27,8 +27,9 @@ type authSession struct {
 	// Role is the caller's resolved role inside TenantID. Empty string means
 	// "attach no role key" (tenantless sessions); readers then fall back to
 	// TenantRoleFromContext's fail-closed Viewer default.
-	Role        types.TenantRole
-	SystemAdmin bool
+	Role         types.TenantRole
+	RoleVerified bool
+	SystemAdmin  bool
 	// APIKeyScope marks machine principals; the APIKeyGate authorizes them
 	// per-route from this scope.
 	APIKeyScope *types.TenantAPIKeyScope
@@ -68,6 +69,7 @@ func applyAuthSession(c *gin.Context, s authSession) {
 	ctx = types.WithPrincipal(ctx, s.Principal)
 	if s.Role != "" {
 		set(types.TenantRoleContextKey, s.Role)
+		set(types.TenantRoleVerifiedContextKey, s.RoleVerified)
 	}
 	set(types.SystemAdminContextKey, s.SystemAdmin)
 	if s.APIKeyScope != nil {

@@ -73,6 +73,8 @@ func setupFeedbackPostgresTest(t *testing.T) (*gorm.DB, *feedbackRepository) {
 		knowledge_base_id VARCHAR(36) NOT NULL,
 		knowledge_id VARCHAR(36) NOT NULL,
 		content TEXT NOT NULL DEFAULT '',
+		chunk_index INTEGER NOT NULL DEFAULT 0,
+		chunk_type VARCHAR(20) NOT NULL DEFAULT 'text',
 		created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		deleted_at TIMESTAMP WITH TIME ZONE
@@ -87,6 +89,15 @@ func setupFeedbackPostgresTest(t *testing.T) (*gorm.DB, *feedbackRepository) {
 		deleted_at TIMESTAMP WITH TIME ZONE
 	)`).Error; err != nil {
 		t.Fatalf("create PostgreSQL messages table: %v", err)
+	}
+	if err := db.Exec(`CREATE TABLE knowledges (
+		id VARCHAR(36) PRIMARY KEY,
+		tenant_id BIGINT NOT NULL,
+		knowledge_base_id VARCHAR(36) NOT NULL,
+		title TEXT NOT NULL DEFAULT '',
+		deleted_at TIMESTAMP WITH TIME ZONE
+	)`).Error; err != nil {
+		t.Fatalf("create PostgreSQL knowledges table: %v", err)
 	}
 	migrationPath := filepath.Join("..", "..", "..", "migrations", "versioned", "000070_answer_feedback.up.sql")
 	migration, err := os.ReadFile(migrationPath)
@@ -272,5 +283,224 @@ func TestFeedbackRepositoryPostgresConcurrentSameMessageTransitions(t *testing.T
 	}
 	if chunk.LikeCount != 1 || chunk.DislikeCount != 0 || chunk.RecallWeight != 1.2 {
 		t.Fatalf("final same-message aggregate = %#v", chunk)
+	}
+}
+
+func TestFeedbackRepositoryPostgresGovernanceQueriesAndReset(t *testing.T) {
+	db, repo := setupFeedbackPostgresTest(t)
+	ctx := context.Background()
+	cfg := types.DefaultChunkFeedbackConfig()
+	if err := db.Exec(`INSERT INTO knowledges
+		(id, tenant_id, knowledge_base_id, title)
+		VALUES ('knowledge-1', 9, 'kb-1', 'PostgreSQL handbook')`).Error; err != nil {
+		t.Fatalf("insert knowledge: %v", err)
+	}
+	if err := db.Exec(`INSERT INTO chunks
+		(id, tenant_id, knowledge_base_id, knowledge_id, content, chunk_index, chunk_type)
+		VALUES ('chunk-1', 9, 'kb-1', 'knowledge-1', 'governance content', 4, 'text')`).Error; err != nil {
+		t.Fatalf("insert chunk: %v", err)
+	}
+	if err := db.Exec(`INSERT INTO messages
+		(id, session_id, role, is_completed)
+		VALUES ('message-1', 'session-1', 'assistant', true)`).Error; err != nil {
+		t.Fatalf("insert message: %v", err)
+	}
+	if err := db.Create(&types.MessageChunkReference{
+		SessionTenantID: 1,
+		ChunkTenantID:   9,
+		SessionID:       "session-1",
+		MessageID:       "message-1",
+		ChunkID:         "chunk-1",
+		KnowledgeBaseID: "kb-1",
+		KnowledgeID:     "knowledge-1",
+	}).Error; err != nil {
+		t.Fatalf("insert reference: %v", err)
+	}
+	if _, err := repo.ApplyMessageFeedback(ctx, types.MessageFeedbackMutation{
+		SessionTenantID: 1,
+		UserID:          "user-1",
+		SessionID:       "session-1",
+		MessageID:       "message-1",
+		FeedbackType:    types.FeedbackTypeDislike,
+		ReasonCode:      types.FeedbackReasonIncorrect,
+	}, cfg); err != nil {
+		t.Fatalf("apply feedback: %v", err)
+	}
+
+	query := &types.ChunkFeedbackListQuery{FeedbackStatus: types.ChunkFeedbackStatusLow}
+	if err := query.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	items, total, err := repo.ListChunkFeedback(ctx, 9, "kb-1", query, cfg)
+	if err != nil {
+		t.Fatalf("list governance: %v", err)
+	}
+	if total != 1 || len(items) != 1 || items[0].SessionCount != 1 || items[0].KnowledgeTitle != "PostgreSQL handbook" {
+		t.Fatalf("list total=%d items=%#v", total, items)
+	}
+	detail, err := repo.GetChunkFeedbackDetail(ctx, 9, "kb-1", "chunk-1")
+	if err != nil {
+		t.Fatalf("detail: %v", err)
+	}
+	if len(detail.ReasonCounts) != 1 || detail.ReasonCounts[0].ReasonCode != types.FeedbackReasonIncorrect {
+		t.Fatalf("detail reasons=%#v", detail.ReasonCounts)
+	}
+
+	futureFeedbackAt := time.Now().UTC().Add(10 * time.Minute).Truncate(time.Microsecond)
+	if err := db.Model(&types.MessageFeedback{}).
+		Where("message_id = ?", "message-1").
+		Update("feedback_at", futureFeedbackAt).Error; err != nil {
+		t.Fatalf("move PostgreSQL feedback into future: %v", err)
+	}
+	if _, err := repo.ResetChunkFeedback(ctx, 9, "kb-1", "chunk-1", "fixed", cfg); err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+	var resetChunk types.Chunk
+	if err := db.Where("tenant_id = ? AND id = ?", 9, "chunk-1").First(&resetChunk).Error; err != nil {
+		t.Fatalf("load reset chunk: %v", err)
+	}
+	if resetChunk.FeedbackResetAt == nil || !resetChunk.FeedbackResetAt.After(futureFeedbackAt) {
+		t.Fatalf("PostgreSQL reset baseline %v did not pass feedback %v", resetChunk.FeedbackResetAt, futureFeedbackAt)
+	}
+	detail, err = repo.GetChunkFeedbackDetail(ctx, 9, "kb-1", "chunk-1")
+	if err != nil {
+		t.Fatalf("detail after reset: %v", err)
+	}
+	if detail.LikeCount != 0 || detail.DislikeCount != 0 || detail.SessionCount != 0 || len(detail.ReasonCounts) != 0 {
+		t.Fatalf("detail after reset=%#v", detail)
+	}
+	logs, logTotal, err := repo.ListChunkFeedbackWeightLogs(ctx, 9, "kb-1", "chunk-1", &types.Pagination{Page: 1, PageSize: 20})
+	if err != nil {
+		t.Fatalf("logs: %v", err)
+	}
+	if logTotal != 2 || len(logs) != 2 || logs[0].Source != types.ChunkFeedbackLogSourceAdminReset {
+		t.Fatalf("logs total=%d logs=%#v", logTotal, logs)
+	}
+	var rawFeedbacks int64
+	if err := db.Model(&types.MessageFeedback{}).Count(&rawFeedbacks).Error; err != nil {
+		t.Fatal(err)
+	}
+	if rawFeedbacks != 1 {
+		t.Fatalf("reset removed raw feedback: %d", rawFeedbacks)
+	}
+}
+
+func TestFeedbackRepositoryPostgresResetSerializesWithFeedback(t *testing.T) {
+	db, repo := setupFeedbackPostgresTest(t)
+	cfg := types.DefaultChunkFeedbackConfig()
+	if err := db.Exec(`INSERT INTO chunks
+		(id, tenant_id, knowledge_base_id, knowledge_id, content)
+		VALUES ('chunk-1', 9, 'kb-1', 'knowledge-1', 'content')`).Error; err != nil {
+		t.Fatalf("insert chunk: %v", err)
+	}
+	if err := db.Exec(`INSERT INTO messages
+		(id, session_id, role, is_completed)
+		VALUES ('message-1', 'session-1', 'assistant', true)`).Error; err != nil {
+		t.Fatalf("insert message: %v", err)
+	}
+	if err := db.Create(&types.MessageChunkReference{
+		SessionTenantID: 1, ChunkTenantID: 9, SessionID: "session-1", MessageID: "message-1",
+		ChunkID: "chunk-1", KnowledgeBaseID: "kb-1", KnowledgeID: "knowledge-1",
+	}).Error; err != nil {
+		t.Fatalf("insert reference: %v", err)
+	}
+	baseMutation := types.MessageFeedbackMutation{
+		SessionTenantID: 1, UserID: "user-1", SessionID: "session-1", MessageID: "message-1",
+		FeedbackType: types.FeedbackTypeDislike, ReasonCode: types.FeedbackReasonIncorrect,
+	}
+	if _, err := repo.ApplyMessageFeedback(context.Background(), baseMutation, cfg); err != nil {
+		t.Fatalf("initial dislike: %v", err)
+	}
+	if err := db.Exec(`
+		CREATE FUNCTION pause_feedback_reset_update() RETURNS trigger AS $$
+		BEGIN
+			IF NEW.feedback_reset_at IS NOT NULL
+				AND NEW.like_count = 0 AND NEW.dislike_count = 0 THEN
+				PERFORM pg_sleep(4);
+			END IF;
+			RETURN NEW;
+		END;
+		$$ LANGUAGE plpgsql
+	`).Error; err != nil {
+		t.Fatalf("install reset pause function: %v", err)
+	}
+	if err := db.Exec(`CREATE TRIGGER pause_feedback_reset_update
+			BEFORE UPDATE ON chunks
+			FOR EACH ROW EXECUTE FUNCTION pause_feedback_reset_update()
+	`).Error; err != nil {
+		t.Fatalf("install reset pause trigger: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	resetDone := make(chan error, 1)
+	go func() {
+		_, err := repo.ResetChunkFeedback(ctx, 9, "kb-1", "chunk-1", "concurrent reset", cfg)
+		resetDone <- err
+	}()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		var sleeping int64
+		if err := db.Raw(`SELECT COUNT(*) FROM pg_stat_activity
+			WHERE wait_event = 'PgSleep' AND query LIKE 'UPDATE "chunks"%'`).Scan(&sleeping).Error; err != nil {
+			t.Fatalf("inspect reset lock contention: %v", err)
+		}
+		if sleeping > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("reset transaction never reached the deterministic pause trigger")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	feedbackDone := make(chan error, 1)
+	go func() {
+		like := baseMutation
+		like.FeedbackType = types.FeedbackTypeLike
+		like.ReasonCode = ""
+		_, err := repo.ApplyMessageFeedback(ctx, like, cfg)
+		feedbackDone <- err
+	}()
+	lockDeadline := time.Now().Add(3 * time.Second)
+	for {
+		var waiting int64
+		if err := db.Raw(`SELECT COUNT(*) FROM pg_stat_activity
+			WHERE wait_event_type = 'Lock' AND query LIKE 'SELECT %FROM "chunks"%FOR UPDATE'`).Scan(&waiting).Error; err != nil {
+			t.Fatalf("inspect feedback row-lock wait: %v", err)
+		}
+		if waiting > 0 {
+			break
+		}
+		if time.Now().After(lockDeadline) {
+			t.Fatal("feedback transaction did not enter a PostgreSQL row-lock wait")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if err := <-resetDone; err != nil {
+		t.Fatalf("concurrent reset: %v", err)
+	}
+	if err := <-feedbackDone; err != nil {
+		t.Fatalf("feedback after blocked reset: %v", err)
+	}
+
+	var chunk types.Chunk
+	if err := db.Where("tenant_id = ? AND id = ?", 9, "chunk-1").First(&chunk).Error; err != nil {
+		t.Fatalf("load chunk: %v", err)
+	}
+	var feedback types.MessageFeedback
+	if err := db.First(&feedback).Error; err != nil {
+		t.Fatalf("load feedback: %v", err)
+	}
+	if chunk.FeedbackResetAt == nil {
+		t.Fatal("reset baseline was not stored")
+	}
+	if feedback.FeedbackAt.After(*chunk.FeedbackResetAt) {
+		if chunk.LikeCount != 1 || chunk.DislikeCount != 0 || chunk.RecallWeight != cfg.HighRecallWeight {
+			t.Fatalf("post-reset feedback disagrees with aggregate: feedback=%#v chunk=%#v", feedback, chunk)
+		}
+	} else if chunk.LikeCount != 0 || chunk.DislikeCount != 0 || chunk.RecallWeight != cfg.NormalRecallWeight {
+		t.Fatalf("pre-reset feedback survived aggregate reset: feedback=%#v chunk=%#v", feedback, chunk)
 	}
 }

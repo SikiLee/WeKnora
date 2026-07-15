@@ -574,6 +574,21 @@ func (g *rbacGuards) KBAccessWrite(param string) gin.HandlerFunc {
 	)
 }
 
+func (g *rbacGuards) KBFeedbackAccess(param string) gin.HandlerFunc {
+	return middleware.RequireKBFeedbackAccess(
+		middleware.KBIDFromParam(param),
+		types.OrgRoleEditor,
+		g.kbService,
+		g.kbShareService,
+		g.agentShareService,
+		g.cfg,
+	)
+}
+
+func (g *rbacGuards) KBFeedbackGovernance() gin.HandlerFunc {
+	return middleware.RequireKBFeedbackGovernance(g.cfg)
+}
+
 // KBAccessReadFromKnowledgeIDParam is like KBAccessRead but resolves
 // the kb_id by walking a knowledge document (URL `:knowledge_id`)
 // back to its parent KB. Used by the chunk routes whose URL addresses

@@ -58,6 +58,7 @@ import (
 // resolution.
 type KBAccess struct {
 	KnowledgeBase     *types.KnowledgeBase
+	CallerTenantID    uint64
 	EffectiveTenantID uint64
 	Permission        types.OrgMemberRole
 }
@@ -231,6 +232,36 @@ func RequireKBAccess(
 	agentShareService interfaces.AgentShareService,
 	cfg *config.Config,
 ) gin.HandlerFunc {
+	return requireKBAccess(
+		resolveKBID, requiredPermission, kbService, kbShareService, agentShareService, cfg, false,
+	)
+}
+
+// RequireKBFeedbackAccess is the governance-specific KB resolver. It keeps
+// inaccessible KBs indistinguishable from missing KBs so callers cannot probe
+// cross-tenant resource existence before the ownership guard runs.
+func RequireKBFeedbackAccess(
+	resolveKBID KBIDResolver,
+	requiredPermission types.OrgMemberRole,
+	kbService KBLookup,
+	kbShareService interfaces.KBShareService,
+	agentShareService interfaces.AgentShareService,
+	cfg *config.Config,
+) gin.HandlerFunc {
+	return requireKBAccess(
+		resolveKBID, requiredPermission, kbService, kbShareService, agentShareService, cfg, true,
+	)
+}
+
+func requireKBAccess(
+	resolveKBID KBIDResolver,
+	requiredPermission types.OrgMemberRole,
+	kbService KBLookup,
+	kbShareService interfaces.KBShareService,
+	agentShareService interfaces.AgentShareService,
+	cfg *config.Config,
+	hideForbidden bool,
+) gin.HandlerFunc {
 	warnOnNilConfig(cfg)
 	return func(c *gin.Context) {
 		kbID, err := resolveKBID(c)
@@ -273,6 +304,11 @@ func RequireKBAccess(
 			c.Abort()
 			return
 		case stderrors.Is(err, errKBAccessForbidden):
+			if hideForbidden {
+				_ = c.Error(apperrors.NewNotFoundError("knowledge base not found"))
+				c.Abort()
+				return
+			}
 			if !enforcing {
 				logger.Warnf(ctx, "[rbac] kb-access would 403 (enforcement off): kb=%s required=%s",
 					kbID, requiredPermission)
@@ -343,6 +379,7 @@ func resolveKBAccessOnce(
 	if kb.TenantID == tenantID {
 		return &KBAccess{
 			KnowledgeBase:     kb,
+			CallerTenantID:    tenantID,
 			EffectiveTenantID: tenantID,
 			Permission:        types.OrgRoleAdmin,
 		}, nil
@@ -360,6 +397,7 @@ func resolveKBAccessOnce(
 					tenantID, kbID, permission, source)
 				return &KBAccess{
 					KnowledgeBase:     kb,
+					CallerTenantID:    tenantID,
 					EffectiveTenantID: source,
 					Permission:        permission,
 				}, nil
@@ -414,6 +452,7 @@ func resolveSharedAgentAccess(
 				tenantID, kb.ID, agentID)
 			return &KBAccess{
 				KnowledgeBase:     kb,
+				CallerTenantID:    tenantID,
 				EffectiveTenantID: kb.TenantID,
 				Permission:        types.OrgRoleViewer,
 			}
@@ -424,6 +463,7 @@ func resolveSharedAgentAccess(
 						tenantID, kb.ID, agentID)
 					return &KBAccess{
 						KnowledgeBase:     kb,
+						CallerTenantID:    tenantID,
 						EffectiveTenantID: kb.TenantID,
 						Permission:        types.OrgRoleViewer,
 					}
@@ -438,6 +478,7 @@ func resolveSharedAgentAccess(
 		logger.Infof(ctx, "[kb_access] tenant %d -> KB %s via some shared agent", tenantID, kb.ID)
 		return &KBAccess{
 			KnowledgeBase:     kb,
+			CallerTenantID:    tenantID,
 			EffectiveTenantID: kb.TenantID,
 			Permission:        types.OrgRoleViewer,
 		}

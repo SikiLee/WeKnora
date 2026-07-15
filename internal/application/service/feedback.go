@@ -232,3 +232,119 @@ func feedbackState(feedback *types.MessageFeedback) *types.MessageFeedbackState 
 		FeedbackAt:   feedback.FeedbackAt,
 	}
 }
+
+func (s *feedbackService) ListChunkFeedback(
+	ctx context.Context,
+	kbID string,
+	query *types.ChunkFeedbackListQuery,
+) (*types.PageResult, error) {
+	tenantID, err := chunkFeedbackScope(ctx, kbID)
+	if err != nil {
+		return nil, err
+	}
+	if err := query.Validate(); err != nil {
+		return nil, err
+	}
+	items, total, err := s.repo.ListChunkFeedback(ctx, tenantID, strings.TrimSpace(kbID), query, s.config)
+	if err != nil {
+		return nil, err
+	}
+	return types.NewPageResult(total, query.Pagination(), items), nil
+}
+
+func (s *feedbackService) GetChunkFeedbackDetail(
+	ctx context.Context,
+	kbID string,
+	chunkID string,
+) (*types.ChunkFeedbackDetail, error) {
+	tenantID, err := chunkFeedbackScope(ctx, kbID)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(chunkID) == "" {
+		return nil, errors.New("chunk ID is required")
+	}
+	detail, err := s.repo.GetChunkFeedbackDetail(ctx, tenantID, strings.TrimSpace(kbID), strings.TrimSpace(chunkID))
+	if err != nil {
+		return nil, err
+	}
+	detail.ContentPreview = chunkFeedbackPreview(detail.Content)
+	return detail, nil
+}
+
+func (s *feedbackService) ListChunkFeedbackWeightLogs(
+	ctx context.Context,
+	kbID string,
+	chunkID string,
+	page *types.Pagination,
+) (*types.PageResult, error) {
+	tenantID, err := chunkFeedbackScope(ctx, kbID)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(chunkID) == "" {
+		return nil, errors.New("chunk ID is required")
+	}
+	if page == nil {
+		page = &types.Pagination{Page: 1, PageSize: 20}
+	}
+	if err := types.ValidateChunkFeedbackPagination(page.Page, page.PageSize); err != nil {
+		return nil, err
+	}
+	logs, total, err := s.repo.ListChunkFeedbackWeightLogs(
+		ctx, tenantID, strings.TrimSpace(kbID), strings.TrimSpace(chunkID), page,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return types.NewPageResult(total, page, logs), nil
+}
+
+func (s *feedbackService) ResetChunkFeedback(
+	ctx context.Context,
+	kbID string,
+	chunkID string,
+	input *types.ChunkFeedbackResetInput,
+) (*types.ChunkFeedbackDetail, error) {
+	tenantID, err := chunkFeedbackScope(ctx, kbID)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(chunkID) == "" {
+		return nil, errors.New("chunk ID is required")
+	}
+	if input == nil {
+		input = &types.ChunkFeedbackResetInput{}
+	}
+	if err := input.Validate(); err != nil {
+		return nil, err
+	}
+	kbID = strings.TrimSpace(kbID)
+	chunkID = strings.TrimSpace(chunkID)
+	detail, err := s.repo.ResetChunkFeedback(ctx, tenantID, kbID, chunkID, input.Reason, s.config)
+	if err != nil {
+		return nil, err
+	}
+	detail.ContentPreview = chunkFeedbackPreview(detail.Content)
+	return detail, nil
+}
+
+func chunkFeedbackScope(ctx context.Context, kbID string) (uint64, error) {
+	if strings.TrimSpace(kbID) == "" {
+		return 0, errors.New("knowledge base ID is required")
+	}
+	tenantID, ok := types.TenantIDFromContext(ctx)
+	if !ok || tenantID == 0 {
+		return 0, types.ErrFeedbackUnauthorized
+	}
+	return tenantID, nil
+}
+
+func chunkFeedbackPreview(content string) string {
+	const maxRunes = 200
+	runes := []rune(strings.TrimSpace(content))
+	if len(runes) <= maxRunes {
+		return string(runes)
+	}
+	return string(runes[:maxRunes])
+}

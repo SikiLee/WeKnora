@@ -24,6 +24,9 @@ const (
 	// in the currently active tenant (loaded by the auth middleware from
 	// the tenant_members table). See TenantRoleFromContext.
 	TenantRoleContextKey ContextKey = "TenantRole"
+	// TenantRoleVerifiedContextKey marks roles loaded from an active, persisted
+	// tenant membership (including a successfully persisted orphan-owner repair).
+	TenantRoleVerifiedContextKey ContextKey = "TenantRoleVerified"
 	// SessionTenantIDContextKey is the context key for session owner's tenant ID.
 	// When set (e.g. in pipeline with shared agent), session/message lookups use this instead of TenantIDContextKey.
 	SessionTenantIDContextKey ContextKey = "SessionTenantID"

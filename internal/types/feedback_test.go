@@ -203,6 +203,53 @@ func TestChunkFeedbackFieldsAreNotSerialized(t *testing.T) {
 	}
 }
 
+func TestChunkFeedbackListQueryValidate(t *testing.T) {
+	query := &ChunkFeedbackListQuery{}
+	if err := query.Validate(); err != nil {
+		t.Fatalf("default query: %v", err)
+	}
+	if query.Page != 1 || query.PageSize != 20 || query.FeedbackStatus != ChunkFeedbackStatusAll ||
+		query.SortBy != "feedback_updated_at" || query.SortOrder != "desc" {
+		t.Fatalf("default query = %#v", query)
+	}
+
+	validStatuses := []string{
+		ChunkFeedbackStatusAll, ChunkFeedbackStatusRated, ChunkFeedbackStatusHigh,
+		ChunkFeedbackStatusNormal, ChunkFeedbackStatusLow, ChunkFeedbackStatusUnrated,
+	}
+	for _, status := range validStatuses {
+		q := &ChunkFeedbackListQuery{FeedbackStatus: status}
+		if err := q.Validate(); err != nil {
+			t.Fatalf("status %q should be valid: %v", status, err)
+		}
+	}
+
+	invalid := []*ChunkFeedbackListQuery{
+		{Page: -1},
+		{Page: int(^uint(0) >> 1), PageSize: 100},
+		{PageSize: 101},
+		{FeedbackStatus: "critical"},
+		{SortBy: "content; DROP TABLE chunks"},
+		{SortOrder: "sideways"},
+	}
+	for _, q := range invalid {
+		if err := q.Validate(); err == nil {
+			t.Fatalf("invalid query accepted: %#v", q)
+		}
+	}
+}
+
+func TestChunkFeedbackResetInputCharacterLimit(t *testing.T) {
+	input := &ChunkFeedbackResetInput{Reason: strings.Repeat("x", 500)}
+	if err := input.Validate(); err != nil {
+		t.Fatalf("500-character reason should be valid: %v", err)
+	}
+	input.Reason += "x"
+	if err := input.Validate(); err == nil {
+		t.Fatal("501-character reset reason should be rejected")
+	}
+}
+
 func ptrFloat(v float64) *float64 {
 	return &v
 }

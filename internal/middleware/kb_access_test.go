@@ -3,6 +3,8 @@ package middleware
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 
@@ -229,6 +231,7 @@ func TestRequireKBAccess_OwnKB(t *testing.T) {
 	require.Equal(t, 200, rec.Code) // gin's default; nothing wrote a status
 	access, ok := KBAccessFromContext(c)
 	require.True(t, ok)
+	require.Equal(t, uint64(100), access.CallerTenantID)
 	require.Equal(t, uint64(100), access.EffectiveTenantID)
 	require.Equal(t, types.OrgRoleAdmin, access.Permission, "own KB grants admin")
 	// The request context's tenant should still be the caller's own.
@@ -279,6 +282,7 @@ func TestRequireKBAccess_SharedKB_RewritesTenantContext(t *testing.T) {
 	require.False(t, c.IsAborted())
 	access, ok := KBAccessFromContext(c)
 	require.True(t, ok)
+	require.Equal(t, uint64(100), access.CallerTenantID)
 	require.Equal(t, uint64(200), access.EffectiveTenantID)
 	got, _ := types.TenantIDFromContext(c.Request.Context())
 	require.Equal(t, uint64(200), got, "guard must rewrite context to source tenant")
@@ -297,6 +301,42 @@ func TestRequireKBAccess_SharedKB_PermissionBelowMin_Aborts(t *testing.T) {
 		guardOpts{},
 	)
 	require.True(t, c.IsAborted(), "Viewer share must reject when Editor required")
+}
+
+func TestRequireKBFeedbackAccessDoesNotRevealCrossTenantKBExistence(t *testing.T) {
+	resources := []struct {
+		name string
+		kb   *types.KnowledgeBase
+	}{
+		{name: "real cross-tenant KB", kb: &types.KnowledgeBase{ID: "target", TenantID: 200}},
+		{name: "missing KB"},
+	}
+	for _, enabled := range []bool{true, false} {
+		for _, tc := range resources {
+			t.Run(fmt.Sprintf("%s/rbac=%v", tc.name, enabled), func(t *testing.T) {
+				gin.SetMode(gin.TestMode)
+				lookup := &stubKBLookup{kbs: map[string]*types.KnowledgeBase{}}
+				if tc.kb != nil {
+					lookup.kbs[tc.kb.ID] = tc.kb
+				}
+				r := gin.New()
+				r.Use(ErrorHandler())
+				r.Use(func(c *gin.Context) {
+					c.Request = c.Request.WithContext(context.WithValue(
+						c.Request.Context(), types.TenantIDContextKey, uint64(100),
+					))
+					c.Next()
+				})
+				r.GET("/knowledge-bases/:id", RequireKBFeedbackAccess(
+					KBIDFromParam("id"), types.OrgRoleEditor, lookup, nil, nil, cfgRBAC(enabled),
+				), func(c *gin.Context) { c.Status(http.StatusNoContent) })
+
+				w := httptest.NewRecorder()
+				r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/knowledge-bases/target", nil))
+				require.Equal(t, http.StatusNotFound, w.Code, w.Body.String())
+			})
+		}
+	}
 }
 
 func TestRequireKBAccess_NoTenant_Aborts(t *testing.T) {
