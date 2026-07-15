@@ -9,6 +9,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/Tencent/WeKnora/internal/utils"
 )
 
 // mockFileService is a minimal FileService implementation for testing.
@@ -20,6 +22,13 @@ type savedEntry struct {
 	Data     []byte
 	TenantID uint64
 	FileName string
+}
+
+func allowLoopbackForImageResolverTest(t *testing.T) {
+	t.Helper()
+	t.Setenv("SSRF_WHITELIST", "127.0.0.1,localhost")
+	utils.ResetSSRFWhitelistForTest()
+	t.Cleanup(utils.ResetSSRFWhitelistForTest)
 }
 
 func (m *mockFileService) CheckConnectivity(ctx context.Context) error { return nil }
@@ -42,8 +51,7 @@ func (m *mockFileService) CopyFile(ctx context.Context, srcPath string, tenantID
 }
 
 func TestResolveRemoteImages_NormalDownload(t *testing.T) {
-	// Whitelist localhost for this test so the test server is reachable
-	t.Setenv("SSRF_WHITELIST", "127.0.0.1,localhost")
+	allowLoopbackForImageResolverTest(t)
 
 	// Create a test HTTP server that serves a real PNG image.
 	pngData := createTestPNG(200, 200)
@@ -86,8 +94,22 @@ func TestResolveRemoteImages_NormalDownload(t *testing.T) {
 }
 
 func TestResolveRemoteImages_SSRFBlocked(t *testing.T) {
-	// URLs pointing to private IPs should be blocked by SSRF check.
-	markdown := "![evil](http://127.0.0.1:8080/secret.png)\n\n![also-evil](http://169.254.169.254/metadata)"
+	t.Setenv("SSRF_WHITELIST", "")
+	t.Setenv("SSRF_WHITELIST_EXTRA", "")
+	utils.ResetSSRFWhitelistForTest()
+	t.Cleanup(utils.ResetSSRFWhitelistForTest)
+
+	requestReceived := make(chan struct{}, 1)
+	pngData := createTestPNG(200, 200)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requestReceived <- struct{}{}
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write(pngData)
+	}))
+	defer ts.Close()
+
+	// Both loopback and link-local URLs must be rejected before any request.
+	markdown := fmt.Sprintf("![evil](%s/secret.png)\n\n![also-evil](http://169.254.169.254/metadata)", ts.URL)
 
 	resolver := NewImageResolver()
 	fSvc := &mockFileService{}
@@ -104,11 +126,15 @@ func TestResolveRemoteImages_SSRFBlocked(t *testing.T) {
 	if updated != markdown {
 		t.Errorf("markdown should be unchanged when SSRF blocked")
 	}
+	select {
+	case <-requestReceived:
+		t.Fatal("loopback server received a request despite SSRF blocking")
+	default:
+	}
 }
 
 func TestResolveRemoteImages_NonImageContentType(t *testing.T) {
-	// Whitelist localhost for this test so the test server is reachable
-	t.Setenv("SSRF_WHITELIST", "127.0.0.1,localhost")
+	allowLoopbackForImageResolverTest(t)
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
@@ -156,8 +182,7 @@ func TestResolveRemoteImages_ProviderSchemeSkipped(t *testing.T) {
 }
 
 func TestResolveRemoteImages_MultipleImages(t *testing.T) {
-	// Whitelist localhost for this test so the test server is reachable
-	t.Setenv("SSRF_WHITELIST", "127.0.0.1,localhost")
+	allowLoopbackForImageResolverTest(t)
 
 	pngData := createTestPNG(256, 256)
 	callCount := 0
@@ -211,8 +236,7 @@ func TestResolveRemoteImages_NoImages(t *testing.T) {
 }
 
 func TestResolveRemoteImages_Server404(t *testing.T) {
-	// Whitelist localhost for this test so the test server is reachable
-	t.Setenv("SSRF_WHITELIST", "127.0.0.1,localhost")
+	allowLoopbackForImageResolverTest(t)
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)

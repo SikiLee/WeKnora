@@ -6,9 +6,15 @@ import (
 	"testing"
 
 	"github.com/Tencent/WeKnora/internal/types"
+	"github.com/Tencent/WeKnora/internal/utils"
 )
 
-func makeNotionConfig(cfg *Config, baseURL string, resourceIDs []string) *types.DataSourceConfig {
+func makeNotionConfig(t *testing.T, cfg *Config, baseURL string, resourceIDs []string) *types.DataSourceConfig {
+	t.Helper()
+	t.Setenv("SSRF_WHITELIST", "127.0.0.1,localhost")
+	utils.ResetSSRFWhitelistForTest()
+	t.Cleanup(utils.ResetSSRFWhitelistForTest)
+
 	return &types.DataSourceConfig{
 		Type: types.ConnectorTypeNotion,
 		Credentials: map[string]interface{}{
@@ -33,7 +39,7 @@ func TestConnectorValidate(t *testing.T) {
 	defer ts.Close()
 
 	c := NewConnector()
-	err := c.Validate(context.Background(), makeNotionConfig(cfg, ts.URL, nil))
+	err := c.Validate(context.Background(), makeNotionConfig(t, cfg, ts.URL, nil))
 	if err != nil {
 		t.Fatalf("Validate() error: %v", err)
 	}
@@ -44,7 +50,7 @@ func TestConnectorValidate_BadToken(t *testing.T) {
 	defer ts.Close()
 
 	c := NewConnector()
-	err := c.Validate(context.Background(), makeNotionConfig(
+	err := c.Validate(context.Background(), makeNotionConfig(t,
 		&Config{APIKey: "bad-token"}, ts.URL, nil,
 	))
 	if err == nil {
@@ -57,7 +63,7 @@ func TestConnectorListResources(t *testing.T) {
 	defer ts.Close()
 
 	c := NewConnector()
-	resources, err := c.ListResources(context.Background(), makeNotionConfig(cfg, ts.URL, nil), "")
+	resources, err := c.ListResources(context.Background(), makeNotionConfig(t, cfg, ts.URL, nil), "")
 	if err != nil {
 		t.Fatalf("ListResources() error: %v", err)
 	}
@@ -78,7 +84,9 @@ func TestConnectorFetchAll(t *testing.T) {
 	defer ts.Close()
 
 	c := NewConnector()
-	items, err := c.FetchAll(context.Background(), makeNotionConfig(cfg, ts.URL, []string{"page-1"}), []string{"page-1"})
+	items, err := c.FetchAll(
+		context.Background(), makeNotionConfig(t, cfg, ts.URL, []string{"page-1"}), []string{"page-1"},
+	)
 	if err != nil {
 		t.Fatalf("FetchAll() error: %v", err)
 	}
@@ -113,7 +121,7 @@ func TestConnectorFetchAll_Database(t *testing.T) {
 	defer ts.Close()
 
 	c := NewConnector()
-	items, err := c.FetchAll(context.Background(), makeNotionConfig(cfg, ts.URL, []string{"db-1"}), []string{"db-1"})
+	items, err := c.FetchAll(context.Background(), makeNotionConfig(t, cfg, ts.URL, []string{"db-1"}), []string{"db-1"})
 	if err != nil {
 		t.Fatalf("FetchAll() error: %v", err)
 	}
@@ -156,7 +164,9 @@ func TestConnectorFetchAll_SingleRecord(t *testing.T) {
 	defer ts.Close()
 
 	c := NewConnector()
-	items, err := c.FetchAll(context.Background(), makeNotionConfig(cfg, ts.URL, []string{"record-1"}), []string{"record-1"})
+	items, err := c.FetchAll(
+		context.Background(), makeNotionConfig(t, cfg, ts.URL, []string{"record-1"}), []string{"record-1"},
+	)
 	if err != nil {
 		t.Fatalf("FetchAll() error: %v", err)
 	}
@@ -179,7 +189,7 @@ func TestConnectorFetchIncremental_NoChanges(t *testing.T) {
 	defer ts.Close()
 
 	c := NewConnector()
-	config := makeNotionConfig(cfg, ts.URL, []string{"page-1"})
+	config := makeNotionConfig(t, cfg, ts.URL, []string{"page-1"})
 
 	// First: full fetch to establish baseline
 	_, err := c.FetchAll(context.Background(), config, []string{"page-1"})
