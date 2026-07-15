@@ -19,7 +19,7 @@ func (h *MessageHandler) SetFeedback(c *gin.Context) {
 	sessionID := strings.TrimSpace(c.Param("session_id"))
 	messageID := strings.TrimSpace(c.Param("message_id"))
 	if sessionID == "" || messageID == "" {
-		c.Error(apperrors.NewBadRequestError("session_id and message_id are required"))
+		_ = c.Error(apperrors.NewBadRequestError("session_id and message_id are required"))
 		return
 	}
 
@@ -30,18 +30,18 @@ func (h *MessageHandler) SetFeedback(c *gin.Context) {
 	if err := decoder.Decode(input); err != nil {
 		var maxBytesError *http.MaxBytesError
 		if stderrors.As(err, &maxBytesError) {
-			c.Error(apperrors.NewBadRequestError("message feedback request is too large"))
+			_ = c.Error(apperrors.NewBadRequestError("message feedback request is too large"))
 			return
 		}
-		c.Error(apperrors.NewBadRequestError("invalid message feedback request").WithDetails(err.Error()))
+		_ = c.Error(apperrors.NewBadRequestError("invalid message feedback request").WithDetails(err.Error()))
 		return
 	}
 	if err := ensureJSONEOF(decoder); err != nil {
-		c.Error(apperrors.NewBadRequestError("invalid message feedback request").WithDetails(err.Error()))
+		_ = c.Error(apperrors.NewBadRequestError("invalid message feedback request").WithDetails(err.Error()))
 		return
 	}
 	if err := input.Validate(); err != nil {
-		c.Error(apperrors.NewValidationError(err.Error()))
+		_ = c.Error(apperrors.NewValidationError(err.Error()))
 		return
 	}
 
@@ -70,13 +70,13 @@ func ensureJSONEOF(decoder *json.Decoder) error {
 func (h *MessageHandler) handleMessageFeedbackError(c *gin.Context, err error) {
 	switch {
 	case stderrors.Is(err, types.ErrFeedbackUnauthorized):
-		c.Error(apperrors.NewForbiddenError("message feedback is not authorized"))
+		_ = c.Error(apperrors.NewForbiddenError("message feedback is not authorized"))
 	case stderrors.Is(err, types.ErrFeedbackMessageNotFound):
-		c.Error(apperrors.NewNotFoundError("message not found"))
+		_ = c.Error(apperrors.NewNotFoundError("message not found"))
 	case stderrors.Is(err, types.ErrFeedbackMessageIncomplete):
-		c.Error(apperrors.NewConflictError("only completed assistant messages can be rated"))
+		_ = c.Error(apperrors.NewConflictError("only completed assistant messages can be rated"))
 	default:
 		logger.ErrorWithFields(c.Request.Context(), err, nil)
-		c.Error(apperrors.NewInternalServerError("message feedback operation failed"))
+		_ = c.Error(apperrors.NewInternalServerError("message feedback operation failed"))
 	}
 }

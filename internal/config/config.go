@@ -491,6 +491,7 @@ func ConfigDir() string {
 // LoadConfig 从配置文件加载配置
 func LoadConfig() (*Config, error) {
 	// 设置配置文件名和路径
+	registerFeedbackConfigDefaults(viper.SetDefault)
 	viper.SetConfigName("config")         // 配置文件名称(不带扩展名)
 	viper.SetConfigType("yaml")           // 配置文件类型
 	viper.AddConfigPath(".")              // 当前目录
@@ -796,6 +797,16 @@ func applyAgentEnvOverrides(cfg *Config) {
 			cfg.Agent.ToolApprovalTimeoutSeconds = int(d.Seconds())
 		}
 	}
+}
+
+func registerFeedbackConfigDefaults(setDefault func(string, any)) {
+	defaults := types.DefaultChunkFeedbackConfig()
+	setDefault("feedback.high_rate_threshold", defaults.HighRateThreshold)
+	setDefault("feedback.low_rate_threshold", defaults.LowRateThreshold)
+	setDefault("feedback.optimization_threshold", defaults.OptimizationThreshold)
+	setDefault("feedback.high_recall_weight", defaults.HighRecallWeight)
+	setDefault("feedback.normal_recall_weight", defaults.NormalRecallWeight)
+	setDefault("feedback.low_recall_weight", defaults.LowRecallWeight)
 }
 
 func applyFeedbackDefaultsAndEnvOverrides(cfg *Config) {

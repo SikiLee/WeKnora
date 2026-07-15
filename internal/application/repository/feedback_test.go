@@ -57,7 +57,9 @@ func setupFeedbackRepositoryTest(t *testing.T) (*gorm.DB, *feedbackRepository, *
 		t.Fatalf("migrate feedback tables: %v", err)
 	}
 
-	message := &types.Message{ID: "message-1", SessionID: "session-1", Role: "assistant", Content: "answer", IsCompleted: true}
+	message := &types.Message{
+		ID: "message-1", SessionID: "session-1", Role: "assistant", Content: "answer", IsCompleted: true,
+	}
 	if err := db.Exec(
 		"INSERT INTO messages (id, session_id, role, is_completed) VALUES (?, ?, ?, ?)",
 		message.ID, message.SessionID, message.Role, message.IsCompleted,
@@ -132,7 +134,8 @@ func TestFeedbackRepositoryStateMachineAndIdempotency(t *testing.T) {
 		t.Fatalf("liked feedback = %#v", liked)
 	}
 	got := loadFeedbackChunk(t, db, chunk.ID)
-	if got.LikeCount != 1 || got.DislikeCount != 0 || got.PositiveRate == nil || *got.PositiveRate != 1 || got.RecallWeight != 1.2 {
+	if got.LikeCount != 1 || got.DislikeCount != 0 || got.PositiveRate == nil ||
+		*got.PositiveRate != 1 || got.RecallWeight != 1.2 {
 		t.Fatalf("chunk after like = %#v", got)
 	}
 	if count := countWeightLogs(t, db); count != 1 {
@@ -165,7 +168,8 @@ func TestFeedbackRepositoryStateMachineAndIdempotency(t *testing.T) {
 	}
 	feedbackAt := disliked.FeedbackAt
 	got = loadFeedbackChunk(t, db, chunk.ID)
-	if got.LikeCount != 0 || got.DislikeCount != 1 || got.PositiveRate == nil || *got.PositiveRate != 0 || got.RecallWeight != 0.8 || !got.NeedsOptimization {
+	if got.LikeCount != 0 || got.DislikeCount != 1 || got.PositiveRate == nil ||
+		*got.PositiveRate != 0 || got.RecallWeight != 0.8 || !got.NeedsOptimization {
 		t.Fatalf("chunk after dislike = %#v", got)
 	}
 	if countWeightLogs(t, db) != 2 {
@@ -203,7 +207,8 @@ func TestFeedbackRepositoryStateMachineAndIdempotency(t *testing.T) {
 		t.Fatalf("cancel result = %#v, want nil", cleared)
 	}
 	got = loadFeedbackChunk(t, db, chunk.ID)
-	if got.LikeCount != 0 || got.DislikeCount != 0 || got.PositiveRate != nil || got.RecallWeight != 1 || got.NeedsOptimization {
+	if got.LikeCount != 0 || got.DislikeCount != 0 || got.PositiveRate != nil ||
+		got.RecallWeight != 1 || got.NeedsOptimization {
 		t.Fatalf("chunk after cancel = %#v", got)
 	}
 	if countWeightLogs(t, db) != 3 {
@@ -325,7 +330,9 @@ func TestFeedbackRepositoryResetRollsBackWhenWeightLogFails(t *testing.T) {
 	if err := db.Migrator().DropTable(&types.ChunkFeedbackWeightLog{}); err != nil {
 		t.Fatalf("drop log table: %v", err)
 	}
-	if _, err := repo.ResetChunkFeedback(context.Background(), chunk.TenantID, chunk.KnowledgeBaseID, chunk.ID, "reset", cfg); err == nil {
+	if _, err := repo.ResetChunkFeedback(
+		context.Background(), chunk.TenantID, chunk.KnowledgeBaseID, chunk.ID, "reset", cfg,
+	); err == nil {
 		t.Fatal("expected reset log insert failure")
 	}
 	after := loadFeedbackChunk(t, db, chunk.ID)
@@ -435,7 +442,9 @@ func TestFeedbackRepositoryGovernanceListFiltersSortsAndPaginates(t *testing.T) 
 			if err := query.Validate(); err != nil {
 				t.Fatal(err)
 			}
-			items, total, err := repo.ListChunkFeedback(ctx, unrated.TenantID, unrated.KnowledgeBaseID, query, types.DefaultChunkFeedbackConfig())
+			items, total, err := repo.ListChunkFeedback(
+				ctx, unrated.TenantID, unrated.KnowledgeBaseID, query, types.DefaultChunkFeedbackConfig(),
+			)
 			if err != nil {
 				t.Fatalf("list: %v", err)
 			}
@@ -467,22 +476,30 @@ func TestFeedbackRepositoryGovernanceListFiltersSortsAndPaginates(t *testing.T) 
 	if err := query.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	items, total, err := repo.ListChunkFeedback(ctx, unrated.TenantID, unrated.KnowledgeBaseID, query, types.DefaultChunkFeedbackConfig())
+	items, total, err := repo.ListChunkFeedback(
+		ctx, unrated.TenantID, unrated.KnowledgeBaseID, query, types.DefaultChunkFeedbackConfig(),
+	)
 	if err != nil {
 		t.Fatalf("filtered list: %v", err)
 	}
-	if total != 1 || len(items) != 1 || items[0].ChunkID != "chunk-low" || items[0].KnowledgeTitle != "Low governance handbook" {
+	if total != 1 || len(items) != 1 || items[0].ChunkID != "chunk-low" ||
+		items[0].KnowledgeTitle != "Low governance handbook" {
 		t.Fatalf("filtered list total=%d items=%#v", total, items)
 	}
-	if items[0].ContentPreview != strings.Repeat("界", 200) || len([]rune(items[0].ContentPreview)) != 200 || items[0].Content != "" {
+	if items[0].ContentPreview != strings.Repeat("界", 200) ||
+		len([]rune(items[0].ContentPreview)) != 200 || items[0].Content != "" {
 		t.Fatalf("list projection loaded unexpected content: %#v", items[0])
 	}
 
-	query = &types.ChunkFeedbackListQuery{SortBy: "positive_rate", SortOrder: "asc", Page: 2, PageSize: 2}
+	query = &types.ChunkFeedbackListQuery{
+		SortBy: "positive_rate", SortOrder: "asc", Page: 2, PageSize: 2,
+	}
 	if err := query.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	items, total, err = repo.ListChunkFeedback(ctx, unrated.TenantID, unrated.KnowledgeBaseID, query, types.DefaultChunkFeedbackConfig())
+	items, total, err = repo.ListChunkFeedback(
+		ctx, unrated.TenantID, unrated.KnowledgeBaseID, query, types.DefaultChunkFeedbackConfig(),
+	)
 	if err != nil {
 		t.Fatalf("paged list: %v", err)
 	}
@@ -494,7 +511,9 @@ func TestFeedbackRepositoryGovernanceListFiltersSortsAndPaginates(t *testing.T) 
 	if err := query.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	items, total, err = repo.ListChunkFeedback(ctx, unrated.TenantID+1, unrated.KnowledgeBaseID, query, types.DefaultChunkFeedbackConfig())
+	items, total, err = repo.ListChunkFeedback(
+		ctx, unrated.TenantID+1, unrated.KnowledgeBaseID, query, types.DefaultChunkFeedbackConfig(),
+	)
 	if err != nil || total != 0 || len(items) != 0 {
 		t.Fatalf("cross-tenant list leaked rows: total=%d items=%#v err=%v", total, items, err)
 	}
@@ -524,16 +543,20 @@ func TestFeedbackRepositoryGovernanceDetailLogsAndResetBaseline(t *testing.T) {
 		t.Fatalf("detail before reset = %#v", detail)
 	}
 
-	resetDetail, err := repo.ResetChunkFeedback(ctx, chunk.TenantID, chunk.KnowledgeBaseID, chunk.ID, "content corrected", cfg)
+	resetDetail, err := repo.ResetChunkFeedback(
+		ctx, chunk.TenantID, chunk.KnowledgeBaseID, chunk.ID, "content corrected", cfg,
+	)
 	if err != nil {
 		t.Fatalf("reset: %v", err)
 	}
-	if resetDetail.LikeCount != 0 || resetDetail.DislikeCount != 0 || resetDetail.SessionCount != 0 || len(resetDetail.ReasonCounts) != 0 {
+	if resetDetail.LikeCount != 0 || resetDetail.DislikeCount != 0 ||
+		resetDetail.SessionCount != 0 || len(resetDetail.ReasonCounts) != 0 {
 		t.Fatalf("reset snapshot = %#v", resetDetail)
 	}
 	resetChunk := loadFeedbackChunk(t, db, chunk.ID)
 	if resetChunk.LikeCount != 0 || resetChunk.DislikeCount != 0 || resetChunk.PositiveRate != nil ||
-		resetChunk.RecallWeight != cfg.NormalRecallWeight || resetChunk.NeedsOptimization || resetChunk.FeedbackResetAt == nil {
+		resetChunk.RecallWeight != cfg.NormalRecallWeight || resetChunk.NeedsOptimization ||
+		resetChunk.FeedbackResetAt == nil {
 		t.Fatalf("chunk after reset = %#v", resetChunk)
 	}
 	var feedbackCount, referenceCount int64
@@ -547,7 +570,9 @@ func TestFeedbackRepositoryGovernanceDetailLogsAndResetBaseline(t *testing.T) {
 		t.Fatalf("reset deleted raw data: feedbacks=%d references=%d", feedbackCount, referenceCount)
 	}
 	firstResetAt := *resetChunk.FeedbackResetAt
-	secondDetail, err := repo.ResetChunkFeedback(ctx, chunk.TenantID, chunk.KnowledgeBaseID, chunk.ID, "verified again", cfg)
+	secondDetail, err := repo.ResetChunkFeedback(
+		ctx, chunk.TenantID, chunk.KnowledgeBaseID, chunk.ID, "verified again", cfg,
+	)
 	if err != nil {
 		t.Fatalf("second reset: %v", err)
 	}
@@ -604,11 +629,14 @@ func TestFeedbackRepositoryGovernanceDetailLogsAndResetBaseline(t *testing.T) {
 	if !liked.FeedbackAt.After(*resetChunk.FeedbackResetAt) {
 		t.Fatalf("new feedback %v is not after reset %v", liked.FeedbackAt, *resetChunk.FeedbackResetAt)
 	}
-	if got := loadFeedbackChunk(t, db, chunk.ID); got.LikeCount != 1 || got.DislikeCount != 0 || got.RecallWeight != cfg.HighRecallWeight {
+	if got := loadFeedbackChunk(t, db, chunk.ID); got.LikeCount != 1 ||
+		got.DislikeCount != 0 || got.RecallWeight != cfg.HighRecallWeight {
 		t.Fatalf("new feedback not counted: %#v", got)
 	}
 
-	if _, err := repo.ResetChunkFeedback(ctx, chunk.TenantID, "other-kb", chunk.ID, "", cfg); !errors.Is(err, types.ErrChunkFeedbackNotFound) {
+	if _, err := repo.ResetChunkFeedback(
+		ctx, chunk.TenantID, "other-kb", chunk.ID, "", cfg,
+	); !errors.Is(err, types.ErrChunkFeedbackNotFound) {
 		t.Fatalf("cross-KB reset error = %v", err)
 	}
 }
@@ -653,7 +681,9 @@ func TestFeedbackRepositoryGovernanceJoinsFeedbackBySession(t *testing.T) {
 	if err := query.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	items, total, err := repo.ListChunkFeedback(ctx, chunk.TenantID, chunk.KnowledgeBaseID, query, types.DefaultChunkFeedbackConfig())
+	items, total, err := repo.ListChunkFeedback(
+		ctx, chunk.TenantID, chunk.KnowledgeBaseID, query, types.DefaultChunkFeedbackConfig(),
+	)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}

@@ -97,7 +97,7 @@ func assertSQLiteFeedbackSchema(t *testing.T, dbPath string, wantPresent bool) {
 	t.Helper()
 	db, err := sql.Open("sqlite3", dbPath)
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { require.NoError(t, db.Close()) }()
 
 	for _, column := range []string{
 		"like_count",
@@ -124,7 +124,7 @@ func sqliteColumnExists(t *testing.T, db *sql.DB, tableName, columnName string) 
 	t.Helper()
 	rows, err := db.Query("PRAGMA table_info(" + tableName + ")")
 	require.NoError(t, err)
-	defer rows.Close()
+	defer func() { require.NoError(t, rows.Close()) }()
 
 	for rows.Next() {
 		var cid int

@@ -48,6 +48,8 @@ export default {
       resetSuccess: 'Chunk feedback reset.',
       resetFailed: 'Could not reset chunk feedback.',
       resetRefreshFailed: 'Chunk feedback was reset, but the latest data could not be loaded. Refresh to try again.',
+      sortAscending: 'Sort ascending',
+      sortDescending: 'Sort descending',
       status: {
         all: 'All feedback',
         rated: 'Rated',

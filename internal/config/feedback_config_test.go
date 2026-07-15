@@ -4,8 +4,38 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/go-viper/mapstructure/v2"
+	"github.com/spf13/viper"
+
 	"github.com/Tencent/WeKnora/internal/types"
 )
+
+func TestFeedbackConfigDefaultsMergePartialYAMLSection(t *testing.T) {
+	v := viper.New()
+	registerFeedbackConfigDefaults(v.SetDefault)
+	v.SetConfigType("yaml")
+	if err := v.ReadConfig(strings.NewReader("feedback:\n  high_rate_threshold: 0.9\n")); err != nil {
+		t.Fatalf("read partial config: %v", err)
+	}
+	var cfg Config
+	if err := v.Unmarshal(&cfg, func(dc *mapstructure.DecoderConfig) {
+		dc.TagName = "yaml"
+	}); err != nil {
+		t.Fatalf("decode partial config: %v", err)
+	}
+	if cfg.Feedback == nil ||
+		cfg.Feedback.HighRateThreshold != 0.9 ||
+		cfg.Feedback.LowRateThreshold != 0.5 ||
+		cfg.Feedback.OptimizationThreshold != 0.2 ||
+		cfg.Feedback.HighRecallWeight != 1.2 ||
+		cfg.Feedback.NormalRecallWeight != 1.0 ||
+		cfg.Feedback.LowRecallWeight != 0.8 {
+		t.Fatalf("partial feedback config did not inherit defaults: %+v", cfg.Feedback)
+	}
+	if err := ValidateConfig(&cfg); err != nil {
+		t.Fatalf("partial feedback config failed validation: %v", err)
+	}
+}
 
 func TestApplyFeedbackDefaultsAndEnvOverrides(t *testing.T) {
 	t.Run("defaults when section is absent", func(t *testing.T) {

@@ -20,6 +20,10 @@
       <t-select v-model="filters.sortBy" @change="refreshList">
         <t-option v-for="option in sortOptions" :key="option.value" :value="option.value" :label="option.label" />
       </t-select>
+      <t-button variant="outline" shape="square" :title="sortOrderLabel"
+        :aria-label="sortOrderLabel" @click="toggleSortOrder">
+        <t-icon :name="filters.sortOrder === 'asc' ? 'sort-ascending' : 'sort-descending'" />
+      </t-button>
       <t-button variant="outline" shape="square" :title="t('common.refresh')"
         :aria-label="t('common.refresh')" :loading="loading" @click="refreshList">
         <t-icon name="refresh" />
@@ -135,7 +139,8 @@
     <Teleport to="body">
       <t-dialog v-model:visible="resetDialogVisible" :header="t('feedback.governance.resetTitle')"
         :confirm-btn="{ content: t('feedback.governance.confirmReset'), theme: 'danger', loading: resetting }"
-        :cancel-btn="t('common.cancel')" width="min(460px, calc(100vw - 32px))" @confirm="confirmReset">
+        :cancel-btn="t('common.cancel')" width="min(460px, calc(100vw - 32px))" @confirm="confirmReset"
+        @close="handleResetDialogClose">
         <div class="reset-dialog">
           <p>{{ t('feedback.governance.resetDescription') }}</p>
           <t-textarea v-model="resetReason" :placeholder="t('feedback.governance.resetReasonPlaceholder')"
@@ -176,6 +181,9 @@ const sortOptions = computed(() => ['feedback_updated_at', 'like_count', 'dislik
   value,
   label: t(`feedback.governance.sort.${value}`),
 })))
+const sortOrderLabel = computed(() => t(
+  filters.sortOrder === 'asc' ? 'feedback.governance.sortAscending' : 'feedback.governance.sortDescending',
+))
 
 const columns = computed(() => [
   { colKey: 'chunk', title: t('feedback.governance.columns.chunk'), width: 180 },
@@ -204,6 +212,10 @@ const actionLabel = (action: string) => t(`feedback.governance.actions.${action}
 const refreshList = async () => {
   if (!await loadList(true)) MessagePlugin.error(t('feedback.governance.loadFailed'))
 }
+const toggleSortOrder = async () => {
+  filters.sortOrder = filters.sortOrder === 'asc' ? 'desc' : 'asc'
+  await refreshList()
+}
 const handlePageChange = async () => {
   if (!await loadList(false)) MessagePlugin.error(t('feedback.governance.loadFailed'))
 }
@@ -226,6 +238,9 @@ const confirmReset = async () => {
     MessagePlugin.success(t('feedback.governance.resetSuccess'))
   }
 }
+const handleResetDialogClose = () => {
+  resetReason.value = ''
+}
 
 onMounted(() => loadList())
 </script>
@@ -234,7 +249,7 @@ onMounted(() => loadList())
 .feedback-governance { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
 .section-header h2 { margin: 0 0 8px; font-size: 20px; }
 .section-header p { margin: 0; color: var(--td-text-color-secondary); }
-.feedback-toolbar { display: grid; grid-template-columns: minmax(180px, 1fr) 150px 160px 176px 32px; gap: 8px; align-items: center; }
+.feedback-toolbar { display: grid; grid-template-columns: minmax(180px, 1fr) 150px 160px 176px 32px 32px; gap: 8px; align-items: center; }
 .feedback-table-wrap { min-width: 0; border: 1px solid var(--td-component-stroke); border-radius: 6px; overflow: hidden; }
 .chunk-identity { display: flex; flex-direction: column; min-width: 0; gap: 2px; }
 .chunk-identity strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -259,7 +274,7 @@ onMounted(() => loadList())
 .reason-row { display: flex; justify-content: space-between; padding: 10px 4px; border-bottom: 1px solid var(--td-component-stroke); }
 .reset-dialog p { margin: 0 0 14px; color: var(--td-text-color-secondary); line-height: 1.6; }
 @media (max-width: 1100px) {
-  .feedback-toolbar { grid-template-columns: minmax(160px, 1fr) repeat(2, 150px) 32px; }
+  .feedback-toolbar { grid-template-columns: minmax(160px, 1fr) repeat(2, 150px) 32px 32px; }
   .feedback-toolbar > :nth-child(4) { grid-column: 1 / 2; }
   .detail-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
@@ -269,7 +284,8 @@ onMounted(() => loadList())
   .feedback-toolbar > :nth-child(2),
   .feedback-toolbar > :nth-child(3),
   .feedback-toolbar > :nth-child(4) { grid-column: 1 / 2; }
-  .feedback-toolbar > :nth-child(5) { grid-column: 2 / 3; grid-row: 2; }
+  .feedback-toolbar > :nth-child(5) { grid-column: 2 / 3; grid-row: 4; }
+  .feedback-toolbar > :nth-child(6) { grid-column: 2 / 3; grid-row: 3; }
   .feedback-pagination { justify-content: flex-start; overflow-x: auto; }
   .detail-heading { align-items: flex-start; }
   .detail-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }

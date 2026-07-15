@@ -20,22 +20,32 @@ type chunkFeedbackServiceStub struct {
 	listFn   func(context.Context, string, *types.ChunkFeedbackListQuery) (*types.PageResult, error)
 	detailFn func(context.Context, string, string) (*types.ChunkFeedbackDetail, error)
 	logsFn   func(context.Context, string, string, *types.Pagination) (*types.PageResult, error)
-	resetFn  func(context.Context, string, string, *types.ChunkFeedbackResetInput) (*types.ChunkFeedbackDetail, error)
+	resetFn  func(
+		context.Context, string, string, *types.ChunkFeedbackResetInput,
+	) (*types.ChunkFeedbackDetail, error)
 }
 
-func (s *chunkFeedbackServiceStub) ListChunkFeedback(ctx context.Context, kbID string, query *types.ChunkFeedbackListQuery) (*types.PageResult, error) {
+func (s *chunkFeedbackServiceStub) ListChunkFeedback(
+	ctx context.Context, kbID string, query *types.ChunkFeedbackListQuery,
+) (*types.PageResult, error) {
 	return s.listFn(ctx, kbID, query)
 }
 
-func (s *chunkFeedbackServiceStub) GetChunkFeedbackDetail(ctx context.Context, kbID, chunkID string) (*types.ChunkFeedbackDetail, error) {
+func (s *chunkFeedbackServiceStub) GetChunkFeedbackDetail(
+	ctx context.Context, kbID, chunkID string,
+) (*types.ChunkFeedbackDetail, error) {
 	return s.detailFn(ctx, kbID, chunkID)
 }
 
-func (s *chunkFeedbackServiceStub) ListChunkFeedbackWeightLogs(ctx context.Context, kbID, chunkID string, page *types.Pagination) (*types.PageResult, error) {
+func (s *chunkFeedbackServiceStub) ListChunkFeedbackWeightLogs(
+	ctx context.Context, kbID, chunkID string, page *types.Pagination,
+) (*types.PageResult, error) {
 	return s.logsFn(ctx, kbID, chunkID, page)
 }
 
-func (s *chunkFeedbackServiceStub) ResetChunkFeedback(ctx context.Context, kbID, chunkID string, input *types.ChunkFeedbackResetInput) (*types.ChunkFeedbackDetail, error) {
+func (s *chunkFeedbackServiceStub) ResetChunkFeedback(
+	ctx context.Context, kbID, chunkID string, input *types.ChunkFeedbackResetInput,
+) (*types.ChunkFeedbackDetail, error) {
 	return s.resetFn(ctx, kbID, chunkID, input)
 }
 
@@ -54,17 +64,25 @@ func chunkFeedbackHandlerRouter(service interfaces.FeedbackService) *gin.Engine 
 func TestChunkFeedbackHandlerListValidatesAndReturnsPage(t *testing.T) {
 	called := false
 	service := &chunkFeedbackServiceStub{
-		listFn: func(_ context.Context, kbID string, query *types.ChunkFeedbackListQuery) (*types.PageResult, error) {
+		listFn: func(
+			_ context.Context, kbID string, query *types.ChunkFeedbackListQuery,
+		) (*types.PageResult, error) {
 			called = true
 			if kbID != "kb-1" || query.Page != 2 || query.PageSize != 5 ||
-				query.FeedbackStatus != types.ChunkFeedbackStatusLow || query.SortBy != "positive_rate" || query.SortOrder != "asc" {
+				query.FeedbackStatus != types.ChunkFeedbackStatusLow ||
+				query.SortBy != "positive_rate" || query.SortOrder != "asc" {
 				t.Fatalf("unexpected query: kb=%s query=%#v", kbID, query)
 			}
 			return types.NewPageResult(1, query.Pagination(), []*types.ChunkFeedbackListItem{{ChunkID: "chunk-1"}}), nil
 		},
 	}
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/knowledge-bases/kb-1/chunk-feedback?page=2&page_size=5&feedback_status=low&sort_by=positive_rate&sort_order=asc", nil)
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"/knowledge-bases/kb-1/chunk-feedback?page=2&page_size=5"+
+			"&feedback_status=low&sort_by=positive_rate&sort_order=asc",
+		nil,
+	)
 	chunkFeedbackHandlerRouter(service).ServeHTTP(w, req)
 	if !called || w.Code != http.StatusOK {
 		t.Fatalf("called=%v status=%d body=%s", called, w.Code, w.Body.String())
@@ -103,11 +121,15 @@ func TestChunkFeedbackHandlerMapsNotFoundAndAcceptsEmptyResetBody(t *testing.T) 
 		detailFn: func(context.Context, string, string) (*types.ChunkFeedbackDetail, error) {
 			return nil, types.ErrChunkFeedbackNotFound
 		},
-		resetFn: func(_ context.Context, kbID, chunkID string, input *types.ChunkFeedbackResetInput) (*types.ChunkFeedbackDetail, error) {
+		resetFn: func(
+			_ context.Context, kbID, chunkID string, input *types.ChunkFeedbackResetInput,
+		) (*types.ChunkFeedbackDetail, error) {
 			if kbID != "kb-1" || chunkID != "chunk-1" || input.Reason != "" {
 				t.Fatalf("unexpected reset: kb=%s chunk=%s input=%#v", kbID, chunkID, input)
 			}
-			return &types.ChunkFeedbackDetail{ChunkFeedbackListItem: types.ChunkFeedbackListItem{ChunkID: chunkID}}, nil
+			return &types.ChunkFeedbackDetail{
+				ChunkFeedbackListItem: types.ChunkFeedbackListItem{ChunkID: chunkID},
+			}, nil
 		},
 	}
 	router := chunkFeedbackHandlerRouter(service)
@@ -119,9 +141,37 @@ func TestChunkFeedbackHandlerMapsNotFoundAndAcceptsEmptyResetBody(t *testing.T) 
 	}
 
 	w = httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/knowledge-bases/kb-1/chunk-feedback/chunk-1/reset", strings.NewReader(""))
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/knowledge-bases/kb-1/chunk-feedback/chunk-1/reset",
+		strings.NewReader(""),
+	)
 	router.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("reset status=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestChunkFeedbackHandlerRejectsOversizedResetBeforeServiceCall(t *testing.T) {
+	called := false
+	service := &chunkFeedbackServiceStub{
+		resetFn: func(
+			context.Context, string, string, *types.ChunkFeedbackResetInput,
+		) (*types.ChunkFeedbackDetail, error) {
+			called = true
+			return nil, nil
+		},
+	}
+	body := `{"reason":"` + strings.Repeat("x", 9<<10) + `"}`
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/knowledge-bases/kb-1/chunk-feedback/chunk-1/reset",
+		strings.NewReader(body),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	chunkFeedbackHandlerRouter(service).ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest || called {
+		t.Fatalf("status=%d called=%v body=%s", w.Code, called, w.Body.String())
 	}
 }

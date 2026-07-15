@@ -191,7 +191,8 @@ func TestFeedbackRepositoryPostgresConcurrentTransactions(t *testing.T) {
 		if err := db.Where("tenant_id = ? AND id = ?", 9, chunkID).First(&chunk).Error; err != nil {
 			t.Fatalf("load chunk %s: %v", chunkID, err)
 		}
-		if chunk.LikeCount != 5 || chunk.DislikeCount != 5 || chunk.PositiveRate == nil || *chunk.PositiveRate != 0.5 || chunk.RecallWeight != 1 {
+		if chunk.LikeCount != 5 || chunk.DislikeCount != 5 || chunk.PositiveRate == nil ||
+			*chunk.PositiveRate != 0.5 || chunk.RecallWeight != 1 {
 			t.Fatalf("chunk %s aggregate drifted: %#v", chunkID, chunk)
 		}
 	}
@@ -235,10 +236,11 @@ func TestFeedbackRepositoryPostgresConcurrentSameMessageTransitions(t *testing.T
 			<-start
 			feedbackType := types.FeedbackTypeLike
 			reasonCode := ""
-			if index%3 == 1 {
+			switch index % 3 {
+			case 1:
 				feedbackType = types.FeedbackTypeDislike
 				reasonCode = types.FeedbackReasonIncorrect
-			} else if index%3 == 2 {
+			case 2:
 				feedbackType = types.FeedbackTypeNone
 			}
 			_, err := repo.ApplyMessageFeedback(ctx, types.MessageFeedbackMutation{
@@ -369,7 +371,9 @@ func TestFeedbackRepositoryPostgresGovernanceQueriesAndReset(t *testing.T) {
 	if detail.LikeCount != 0 || detail.DislikeCount != 0 || detail.SessionCount != 0 || len(detail.ReasonCounts) != 0 {
 		t.Fatalf("detail after reset=%#v", detail)
 	}
-	logs, logTotal, err := repo.ListChunkFeedbackWeightLogs(ctx, 9, "kb-1", "chunk-1", &types.Pagination{Page: 1, PageSize: 20})
+	logs, logTotal, err := repo.ListChunkFeedbackWeightLogs(
+		ctx, 9, "kb-1", "chunk-1", &types.Pagination{Page: 1, PageSize: 20},
+	)
 	if err != nil {
 		t.Fatalf("logs: %v", err)
 	}

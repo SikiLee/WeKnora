@@ -223,7 +223,7 @@ CREATE TABLE message_feedbacks (
     message_id VARCHAR(36) NOT NULL,
     feedback_type VARCHAR(16) NOT NULL,
     reason_code VARCHAR(64) NOT NULL DEFAULT '',
-    reason_text TEXT NOT NULL,
+    reason_text TEXT NOT NULL DEFAULT (''),
     feedback_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -263,7 +263,7 @@ CREATE TABLE chunk_feedback_weight_logs (
     source_action VARCHAR(64) NOT NULL,
     source_message_id VARCHAR(36) NOT NULL DEFAULT '',
     source_feedback_id VARCHAR(36) NOT NULL DEFAULT '',
-    reason TEXT NOT NULL,
+    reason TEXT NOT NULL DEFAULT (''),
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     KEY idx_chunk_feedback_weight_logs_chunk (chunk_tenant_id, chunk_id, created_at),
     KEY idx_chunk_feedback_weight_logs_created_at (created_at)

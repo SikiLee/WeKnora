@@ -1,3 +1,4 @@
+// Package router tests feedback route registration and API-key policy coverage.
 package router
 
 import (
@@ -60,10 +61,26 @@ func TestChunkFeedbackRoutesDenyAPIKeysByDefault(t *testing.T) {
 		tpl    string
 		path   string
 	}{
-		{http.MethodGet, "/api/v1/knowledge-bases/:id/chunk-feedback", "/api/v1/knowledge-bases/kb-1/chunk-feedback"},
-		{http.MethodGet, "/api/v1/knowledge-bases/:id/chunk-feedback/:chunk_id", "/api/v1/knowledge-bases/kb-1/chunk-feedback/chunk-1"},
-		{http.MethodGet, "/api/v1/knowledge-bases/:id/chunk-feedback/:chunk_id/weight-logs", "/api/v1/knowledge-bases/kb-1/chunk-feedback/chunk-1/weight-logs"},
-		{http.MethodPost, "/api/v1/knowledge-bases/:id/chunk-feedback/:chunk_id/reset", "/api/v1/knowledge-bases/kb-1/chunk-feedback/chunk-1/reset"},
+		{
+			http.MethodGet,
+			"/api/v1/knowledge-bases/:id/chunk-feedback",
+			"/api/v1/knowledge-bases/kb-1/chunk-feedback",
+		},
+		{
+			http.MethodGet,
+			"/api/v1/knowledge-bases/:id/chunk-feedback/:chunk_id",
+			"/api/v1/knowledge-bases/kb-1/chunk-feedback/chunk-1",
+		},
+		{
+			http.MethodGet,
+			"/api/v1/knowledge-bases/:id/chunk-feedback/:chunk_id/weight-logs",
+			"/api/v1/knowledge-bases/kb-1/chunk-feedback/chunk-1/weight-logs",
+		},
+		{
+			http.MethodPost,
+			"/api/v1/knowledge-bases/:id/chunk-feedback/:chunk_id/reset",
+			"/api/v1/knowledge-bases/kb-1/chunk-feedback/chunk-1/reset",
+		},
 	}
 	for _, tc := range cases {
 		if _, ok := g.ensureAPIKeyAuthorizer().Lookup(tc.method, tc.tpl); ok {

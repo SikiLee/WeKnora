@@ -19,7 +19,8 @@
               <div class="settings-nav" data-guide="kb-editor-sidebar">
                 <template v-for="group in navGroups" :key="group.key">
                   <div class="nav-group-title">{{ group.label }}</div>
-                  <div
+                  <button
+                    type="button"
                     v-for="(item, index) in group.items"
                     :key="index"
                     :class="['nav-item', { 'active': currentSection === item.key }]"
@@ -29,7 +30,7 @@
                     <t-icon :name="item.icon" class="nav-icon" />
                     <span class="nav-label">{{ item.label }}</span>
                     <span v-if="item.badge" class="nav-badge">{{ item.badge }}</span>
-                  </div>
+                  </button>
                 </template>
               </div>
             </div>
@@ -1690,13 +1691,18 @@ watch(
 .nav-item {
   display: flex;
   align-items: center;
+  width: 100%;
   padding: 6px 12px;
   margin-bottom: 2px;
+  border: 0;
   border-radius: 6px;
+  background: transparent;
   cursor: pointer;
   transition: all 0.2s ease;
   font-size: 14px;
   color: var(--td-text-color-primary);
+  font-family: inherit;
+  text-align: left;
   user-select: none;
 
   &:hover {
@@ -2016,6 +2022,7 @@ watch(
 
   .nav-item {
     flex: 0 0 auto;
+    width: auto;
     margin-bottom: 0;
     padding: 6px 10px;
   }

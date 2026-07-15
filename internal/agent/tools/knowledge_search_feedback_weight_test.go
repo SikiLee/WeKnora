@@ -96,6 +96,38 @@ func TestKnowledgeSearchFeedbackWeightDoesNotMultiplySharedResultTwice(t *testin
 	assert.Len(t, reader.scopes, 1)
 }
 
+func TestKnowledgeSearchFeedbackWeightPreservesStableScoreTies(t *testing.T) {
+	reader := &fakeAgentRecallWeightReader{weights: []interfaces.ChunkRecallWeight{
+		{TenantID: 1, KnowledgeBaseID: "kb", ChunkID: "first", RecallWeight: 1.2},
+		{TenantID: 1, KnowledgeBaseID: "kb", ChunkID: "second", RecallWeight: 1},
+	}}
+	tool := &KnowledgeSearchTool{feedbackWeightReader: reader}
+	first := agentSearchResult("first", "kb", 0.5)
+	first.KnowledgeID = "z-knowledge"
+	second := agentSearchResult("second", "kb", 0.6)
+	second.KnowledgeID = "a-knowledge"
+	results := []*searchResultWithMeta{first, second}
+
+	tool.applyFeedbackWeights(context.Background(), results, types.SearchTargets{
+		{KnowledgeBaseID: "kb", TenantID: 1},
+	})
+
+	assert.Equal(t, []string{"first", "second"}, agentResultIDs(results))
+	assert.InDelta(t, first.Score, second.Score, 1e-12)
+}
+
+func TestStableSortAgentSearchResultsPreservesPriorOrderForScoreTies(t *testing.T) {
+	first := agentSearchResult("first", "kb", 0.6)
+	first.KnowledgeID = "z-knowledge"
+	second := agentSearchResult("second", "kb", 0.6)
+	second.KnowledgeID = "a-knowledge"
+	results := []*searchResultWithMeta{first, second}
+
+	stableSortAgentSearchResults(results)
+
+	assert.Equal(t, []string{"first", "second"}, agentResultIDs(results))
+}
+
 func agentSearchResult(id, kbID string, score float64) *searchResultWithMeta {
 	return &searchResultWithMeta{
 		SearchResult:    &types.SearchResult{ID: id, KnowledgeBaseID: kbID, Score: score},

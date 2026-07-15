@@ -22,6 +22,7 @@ type feedbackService struct {
 	config      *types.ChunkFeedbackConfig
 }
 
+// NewFeedbackService creates the answer-feedback and chunk-governance service.
 func NewFeedbackService(
 	repo interfaces.FeedbackRepository,
 	sessionRepo interfaces.SessionRepository,
@@ -156,6 +157,13 @@ func (s *feedbackService) SetMessageFeedback(
 		if err := s.PersistMessageChunkReferences(ctx, message); err != nil {
 			return nil, fmt.Errorf("persist feedback attribution fallback: %w", err)
 		}
+		refs, err = s.repo.ListMessageChunkReferences(ctx, sessionTenantID, messageID)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if err := authorizeFeedbackReferenceKnowledgeBases(ctx, refs); err != nil {
+		return nil, fmt.Errorf("%w: %v", types.ErrFeedbackUnauthorized, err)
 	}
 
 	feedback, err := s.repo.ApplyMessageFeedback(ctx, types.MessageFeedbackMutation{
@@ -171,6 +179,26 @@ func (s *feedbackService) SetMessageFeedback(
 		return nil, err
 	}
 	return feedbackState(feedback), nil
+}
+
+func authorizeFeedbackReferenceKnowledgeBases(ctx context.Context, refs []*types.MessageChunkReference) error {
+	kbIDs := make([]string, 0, len(refs))
+	seen := make(map[string]struct{}, len(refs))
+	for _, ref := range refs {
+		if ref == nil {
+			continue
+		}
+		kbID := strings.TrimSpace(ref.KnowledgeBaseID)
+		if kbID == "" {
+			continue
+		}
+		if _, ok := seen[kbID]; ok {
+			continue
+		}
+		seen[kbID] = struct{}{}
+		kbIDs = append(kbIDs, kbID)
+	}
+	return types.AuthorizeTenantAPIKeyKnowledgeBases(ctx, kbIDs...)
 }
 
 func (s *feedbackService) GetMessageFeedback(

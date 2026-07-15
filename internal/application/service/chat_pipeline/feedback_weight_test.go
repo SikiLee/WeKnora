@@ -6,11 +6,32 @@ import (
 	"math"
 	"testing"
 
+	"github.com/Tencent/WeKnora/internal/models/rerank"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+type fakeFeedbackReranker struct {
+	results []rerank.RankResult
+}
+
+func (f fakeFeedbackReranker) Rerank(context.Context, string, []string) ([]rerank.RankResult, error) {
+	return f.results, nil
+}
+
+func (fakeFeedbackReranker) GetModelName() string { return "feedback-test" }
+func (fakeFeedbackReranker) GetModelID() string   { return "feedback-test" }
+
+type fakeFeedbackModelService struct {
+	interfaces.ModelService
+	model rerank.Reranker
+}
+
+func (f fakeFeedbackModelService) GetRerankModel(context.Context, string) (rerank.Reranker, error) {
+	return f.model, nil
+}
 
 type fakeRecallWeightReader struct {
 	weights []interfaces.ChunkRecallWeight
@@ -61,7 +82,11 @@ func TestFeedbackWeightAppliesOnceWithStableSortAndSkipsSyntheticResults(t *test
 		{TenantID: 9, KnowledgeBaseID: "shared-kb", ChunkID: "shared"},
 		{TenantID: 1, KnowledgeBaseID: "owned-kb", ChunkID: "owned"},
 	}, reader.scopes)
-	assert.Equal(t, []string{"https://example.com", "shared", "owned", "history", "unknown"}, resultIDs(chatManage.RerankResult))
+	assert.Equal(
+		t,
+		[]string{"https://example.com", "shared", "owned", "history", "unknown"},
+		resultIDs(chatManage.RerankResult),
+	)
 	assert.Equal(t, 0.5, shared.Score)
 	assert.Equal(t, 0.5, owned.Score)
 	assert.Equal(t, 0.65, web.Score)
@@ -93,7 +118,9 @@ func TestFeedbackWeightFallsBackToSearchResultsAndDefaultsMissingOrInvalidWeight
 		PipelineState:   types.PipelineState{SearchResult: []*types.SearchResult{missing, invalid, boosted}},
 	}
 
-	require.Nil(t, plugin.OnEvent(context.Background(), types.CHUNK_FEEDBACK_WEIGHT, chatManage, func() *PluginError { return nil }))
+	require.Nil(t, plugin.OnEvent(
+		context.Background(), types.CHUNK_FEEDBACK_WEIGHT, chatManage, func() *PluginError { return nil },
+	))
 	assert.Equal(t, []string{"missing", "boosted", "invalid"}, resultIDs(chatManage.SearchResult))
 	assert.Equal(t, 0.8, missing.Score)
 	assert.InDelta(t, 0.72, boosted.Score, 1e-12)
@@ -136,7 +163,9 @@ func TestFeedbackWeightHandlesDuplicatePointersAndNilResults(t *testing.T) {
 		PipelineState:   types.PipelineState{RerankResult: []*types.SearchResult{nil, result, result}},
 	}
 
-	require.Nil(t, plugin.OnEvent(context.Background(), types.CHUNK_FEEDBACK_WEIGHT, chatManage, func() *PluginError { return nil }))
+	require.Nil(t, plugin.OnEvent(
+		context.Background(), types.CHUNK_FEEDBACK_WEIGHT, chatManage, func() *PluginError { return nil },
+	))
 	assert.InDelta(t, 0.6, result.Score, 1e-12)
 	assert.Same(t, result, chatManage.RerankResult[0])
 	assert.Same(t, result, chatManage.RerankResult[1])
@@ -179,7 +208,9 @@ func TestFeedbackWeightSortsNonFiniteScoresDeterministically(t *testing.T) {
 		}},
 	}
 
-	require.Nil(t, plugin.OnEvent(context.Background(), types.CHUNK_FEEDBACK_WEIGHT, chatManage, func() *PluginError { return nil }))
+	require.Nil(t, plugin.OnEvent(
+		context.Background(), types.CHUNK_FEEDBACK_WEIGHT, chatManage, func() *PluginError { return nil },
+	))
 	assert.Equal(t, []string{"high", "low", "nan", "inf"}, resultIDs(chatManage.RerankResult))
 }
 
@@ -196,9 +227,18 @@ func TestFeedbackWeightSurvivesMergeAndFinalTopK(t *testing.T) {
 	chatManage := &types.ChatManage{
 		PipelineRequest: types.PipelineRequest{TenantID: 1, RerankTopK: 2},
 		PipelineState: types.PipelineState{RerankResult: []*types.SearchResult{
-			{ID: "low", KnowledgeBaseID: "kb", KnowledgeID: "knowledge-low", Content: "low content", Score: 0.9, StartAt: 0, EndAt: 10},
-			{ID: "high", KnowledgeBaseID: "kb", KnowledgeID: "knowledge-high", Content: "high content", Score: 0.5, StartAt: 0, EndAt: 12},
-			{ID: "mid", KnowledgeBaseID: "kb", KnowledgeID: "knowledge-mid", Content: "middle content", Score: 0.6, StartAt: 0, EndAt: 14},
+			{
+				ID: "low", KnowledgeBaseID: "kb", KnowledgeID: "knowledge-low",
+				Content: "low content", Score: 0.9, StartAt: 0, EndAt: 10,
+			},
+			{
+				ID: "high", KnowledgeBaseID: "kb", KnowledgeID: "knowledge-high",
+				Content: "high content", Score: 0.5, StartAt: 0, EndAt: 12,
+			},
+			{
+				ID: "mid", KnowledgeBaseID: "kb", KnowledgeID: "knowledge-mid",
+				Content: "middle content", Score: 0.6, StartAt: 0, EndAt: 14,
+			},
 		}},
 	}
 
@@ -213,6 +253,70 @@ func TestFeedbackWeightSurvivesMergeAndFinalTopK(t *testing.T) {
 	assert.InDelta(t, 0.6, chatManage.MergeResult[1].Score, 1e-12)
 }
 
+func TestRerankDefersMMRUntilFeedbackWeightsAreApplied(t *testing.T) {
+	modelService := fakeFeedbackModelService{model: fakeFeedbackReranker{results: []rerank.RankResult{
+		{Index: 0, RelevanceScore: 0.9},
+		{Index: 1, RelevanceScore: 0.8},
+	}}}
+	rankPlugin := &PluginRerank{modelService: modelService}
+	reader := &fakeRecallWeightReader{weights: []interfaces.ChunkRecallWeight{
+		{TenantID: 1, KnowledgeBaseID: "kb", ChunkID: "model-first", RecallWeight: 0.8},
+		{TenantID: 1, KnowledgeBaseID: "kb", ChunkID: "feedback-first", RecallWeight: 1.2},
+	}}
+	weightPlugin := &PluginFeedbackWeight{chunkRepo: reader}
+	modelFirst := &types.SearchResult{
+		ID: "model-first", KnowledgeBaseID: "kb", Content: "alpha", Score: 0.3, StartAt: -1,
+	}
+	feedbackFirst := &types.SearchResult{
+		ID: "feedback-first", KnowledgeBaseID: "kb", Content: "beta", Score: 0.3, StartAt: -1,
+	}
+	chatManage := &types.ChatManage{
+		PipelineRequest: types.PipelineRequest{
+			TenantID: 1, RerankModelID: "feedback-test", RerankTopK: 1,
+			SearchTargets: types.SearchTargets{{KnowledgeBaseID: "kb", TenantID: 1}},
+		},
+		PipelineState: types.PipelineState{
+			RewriteQuery: "query",
+			SearchResult: []*types.SearchResult{modelFirst, feedbackFirst},
+		},
+	}
+
+	require.Nil(t, rankPlugin.OnEvent(
+		context.Background(), types.CHUNK_RERANK, chatManage, func() *PluginError { return nil },
+	))
+	require.True(t, chatManage.RerankMMRPending)
+	require.Len(t, chatManage.RerankResult, 2, "rerank must retain all candidates until feedback weighting")
+
+	require.Nil(t, weightPlugin.OnEvent(
+		context.Background(), types.CHUNK_FEEDBACK_WEIGHT, chatManage, func() *PluginError { return nil },
+	))
+	assert.False(t, chatManage.RerankMMRPending)
+	require.Len(t, chatManage.RerankResult, 1)
+	assert.Equal(t, "feedback-first", chatManage.RerankResult[0].ID)
+}
+
+func TestFeedbackWeightQueryFailureStillFinalizesPendingMMR(t *testing.T) {
+	reader := &fakeRecallWeightReader{err: errors.New("database unavailable")}
+	plugin := &PluginFeedbackWeight{chunkRepo: reader}
+	chatManage := &types.ChatManage{
+		PipelineRequest: types.PipelineRequest{TenantID: 1, RerankTopK: 1},
+		PipelineState: types.PipelineState{
+			RerankMMRPending: true,
+			RerankResult: []*types.SearchResult{
+				{ID: "low", KnowledgeBaseID: "kb", Content: "low", Score: 0.2},
+				{ID: "high", KnowledgeBaseID: "kb", Content: "high", Score: 0.9},
+			},
+		},
+	}
+
+	require.Nil(t, plugin.OnEvent(
+		context.Background(), types.CHUNK_FEEDBACK_WEIGHT, chatManage, func() *PluginError { return nil },
+	))
+	assert.False(t, chatManage.RerankMMRPending)
+	require.Len(t, chatManage.RerankResult, 1)
+	assert.Equal(t, "high", chatManage.RerankResult[0].ID)
+}
+
 func TestFeedbackWeightStableTieSurvivesCrossDocumentMerge(t *testing.T) {
 	for iteration := 0; iteration < 10; iteration++ {
 		manager := NewEventManager()
@@ -225,8 +329,14 @@ func TestFeedbackWeightStableTieSurvivesCrossDocumentMerge(t *testing.T) {
 		chatManage := &types.ChatManage{
 			PipelineRequest: types.PipelineRequest{TenantID: 1},
 			PipelineState: types.PipelineState{RerankResult: []*types.SearchResult{
-				{ID: "first", KnowledgeBaseID: "kb", KnowledgeID: "knowledge-a", Content: "first content", Score: 0.5, StartAt: 0, EndAt: 10},
-				{ID: "second", KnowledgeBaseID: "kb", KnowledgeID: "knowledge-b", Content: "second content", Score: 1, StartAt: 0, EndAt: 12},
+				{
+					ID: "first", KnowledgeBaseID: "kb", KnowledgeID: "knowledge-a",
+					Content: "first content", Score: 0.5, StartAt: 0, EndAt: 10,
+				},
+				{
+					ID: "second", KnowledgeBaseID: "kb", KnowledgeID: "knowledge-b",
+					Content: "second content", Score: 1, StartAt: 0, EndAt: 12,
+				},
 			}},
 		}
 

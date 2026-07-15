@@ -12,6 +12,7 @@ import (
 	"gorm.io/gorm"
 )
 
+// Feedback domain errors are stable sentinels used by services and handlers.
 var (
 	ErrFeedbackUnauthorized      = errors.New("feedback caller is not authorized")
 	ErrFeedbackMessageNotFound   = errors.New("feedback message was not found")
@@ -19,6 +20,7 @@ var (
 	ErrChunkFeedbackNotFound     = errors.New("chunk feedback target was not found")
 )
 
+// Feedback types, reasons, log metadata, and governance statuses form the API wire vocabulary.
 const (
 	FeedbackTypeLike    = "like"
 	FeedbackTypeDislike = "dislike"
@@ -57,6 +59,7 @@ type ChunkFeedbackConfig struct {
 	LowRecallWeight       float64 `yaml:"low_recall_weight"       json:"low_recall_weight"`
 }
 
+// DefaultChunkFeedbackConfig returns the default thresholds and recall weights.
 func DefaultChunkFeedbackConfig() *ChunkFeedbackConfig {
 	return &ChunkFeedbackConfig{
 		HighRateThreshold:     0.80,
@@ -68,6 +71,7 @@ func DefaultChunkFeedbackConfig() *ChunkFeedbackConfig {
 	}
 }
 
+// Validate checks threshold ranges, ordering, and finite positive weights.
 func (c *ChunkFeedbackConfig) Validate() error {
 	if c == nil {
 		return nil
@@ -82,13 +86,17 @@ func (c *ChunkFeedbackConfig) Validate() error {
 		return fmt.Errorf("feedback thresholds must be between 0 and 1")
 	}
 	if !(c.HighRateThreshold > c.LowRateThreshold && c.LowRateThreshold > c.OptimizationThreshold) {
-		return fmt.Errorf("feedback thresholds must satisfy high_rate_threshold > low_rate_threshold > optimization_threshold")
+		return fmt.Errorf(
+			"feedback thresholds must satisfy high_rate_threshold > low_rate_threshold > optimization_threshold",
+		)
 	}
 	if c.HighRecallWeight <= 0 || c.NormalRecallWeight <= 0 || c.LowRecallWeight <= 0 {
 		return fmt.Errorf("feedback recall weights must be positive")
 	}
 	if !(c.HighRecallWeight >= c.NormalRecallWeight && c.NormalRecallWeight >= c.LowRecallWeight) {
-		return fmt.Errorf("feedback recall weights must satisfy high_recall_weight >= normal_recall_weight >= low_recall_weight")
+		return fmt.Errorf(
+			"feedback recall weights must satisfy high_recall_weight >= normal_recall_weight >= low_recall_weight",
+		)
 	}
 	return nil
 }
@@ -98,7 +106,10 @@ func isFinite(v float64) bool {
 }
 
 // CalculateChunkFeedback derives aggregate rate, recall weight, and optimization flag.
-func CalculateChunkFeedback(likeCount, dislikeCount int64, cfg *ChunkFeedbackConfig) (positiveRate *float64, recallWeight float64, needsOptimization bool) {
+func CalculateChunkFeedback(
+	likeCount, dislikeCount int64,
+	cfg *ChunkFeedbackConfig,
+) (positiveRate *float64, recallWeight float64, needsOptimization bool) {
 	if cfg == nil {
 		cfg = DefaultChunkFeedbackConfig()
 	}
@@ -142,6 +153,7 @@ type MessageFeedbackInput struct {
 	ReasonText   string `json:"reason_text,omitempty"`
 }
 
+// Validate normalizes and validates a message feedback state transition.
 func (i *MessageFeedbackInput) Validate() error {
 	if i == nil {
 		return errors.New("feedback input is required")
@@ -195,7 +207,8 @@ type MessageFeedbackMutation struct {
 	ReasonText      string
 }
 
-func (m *MessageFeedback) BeforeCreate(tx *gorm.DB) error {
+// BeforeCreate assigns an ID when callers have not provided one.
+func (m *MessageFeedback) BeforeCreate(_ *gorm.DB) error {
 	if m.ID == "" {
 		m.ID = uuid.NewString()
 	}
@@ -218,7 +231,8 @@ type MessageChunkReference struct {
 	CreatedAt       time.Time
 }
 
-func (m *MessageChunkReference) BeforeCreate(tx *gorm.DB) error {
+// BeforeCreate assigns an ID when callers have not provided one.
+func (m *MessageChunkReference) BeforeCreate(_ *gorm.DB) error {
 	if m.ID == "" {
 		m.ID = uuid.NewString()
 	}
@@ -240,7 +254,8 @@ type ChunkFeedbackWeightLog struct {
 	CreatedAt        time.Time
 }
 
-func (c *ChunkFeedbackWeightLog) BeforeCreate(tx *gorm.DB) error {
+// BeforeCreate assigns an ID when callers have not provided one.
+func (c *ChunkFeedbackWeightLog) BeforeCreate(_ *gorm.DB) error {
 	if c.ID == "" {
 		c.ID = uuid.NewString()
 	}
@@ -260,6 +275,7 @@ type ChunkFeedbackListQuery struct {
 	SortOrder         string `form:"sort_order"`
 }
 
+// Validate normalizes list filters and rejects unsafe or out-of-range values.
 func (q *ChunkFeedbackListQuery) Validate() error {
 	if q == nil {
 		return errors.New("chunk feedback query is required")
@@ -303,6 +319,7 @@ func (q *ChunkFeedbackListQuery) Validate() error {
 	return nil
 }
 
+// ValidateChunkFeedbackPagination rejects invalid and overflowing page offsets.
 func ValidateChunkFeedbackPagination(page, pageSize int) error {
 	if page < 1 {
 		return errors.New("page must be a positive integer")
@@ -317,6 +334,7 @@ func ValidateChunkFeedbackPagination(page, pageSize int) error {
 	return nil
 }
 
+// Pagination returns the validated shared pagination value.
 func (q *ChunkFeedbackListQuery) Pagination() *Pagination {
 	return &Pagination{Page: q.Page, PageSize: q.PageSize}
 }
@@ -341,17 +359,20 @@ type ChunkFeedbackListItem struct {
 	Content           string     `json:"-"`
 }
 
+// ChunkFeedbackReasonCount is a governance-safe dislike reason aggregate.
 type ChunkFeedbackReasonCount struct {
 	ReasonCode string `json:"reason_code"`
 	Count      int64  `json:"count"`
 }
 
+// ChunkFeedbackDetail contains chunk content and reason aggregates.
 type ChunkFeedbackDetail struct {
 	ChunkFeedbackListItem
 	Content      string                      `json:"content"`
 	ReasonCounts []*ChunkFeedbackReasonCount `json:"reason_counts"`
 }
 
+// ChunkFeedbackWeightLogItem is the governance-safe recall-weight history shape.
 type ChunkFeedbackWeightLogItem struct {
 	ID               string    `json:"id"`
 	OldWeight        float64   `json:"old_weight"`
@@ -364,10 +385,12 @@ type ChunkFeedbackWeightLogItem struct {
 	CreatedAt        time.Time `json:"created_at"`
 }
 
+// ChunkFeedbackResetInput carries an optional operator audit reason.
 type ChunkFeedbackResetInput struct {
 	Reason string `json:"reason"`
 }
 
+// Validate normalizes and bounds the reset reason.
 func (i *ChunkFeedbackResetInput) Validate() error {
 	if i == nil {
 		return nil

@@ -48,6 +48,8 @@ export default {
       resetSuccess: '片段反馈已重置。',
       resetFailed: '片段反馈重置失败。',
       resetRefreshFailed: '片段反馈已重置，但最新数据加载失败，请刷新后重试。',
+      sortAscending: '升序排列',
+      sortDescending: '降序排列',
       status: {
         all: '全部反馈',
         rated: '已有评价',

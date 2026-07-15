@@ -1,6 +1,7 @@
 import { markRaw, nextTick, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ensureRagPipelineHistoryStream } from '@/utils/rag-pipeline-history'
+import { buildHistoricalAgentAnswerEvent } from './historicalAgentEvents'
 
 export type ChatMessage = Record<string, unknown>
 
@@ -326,13 +327,8 @@ export function useChatStreamHandler(options: UseChatStreamHandlerOptions) {
       })
     }
 
-    if (messageContent && messageContent.trim()) {
-      const answerEvent: ChatMessage = {
-        type: 'answer',
-        content: messageContent,
-        done: true,
-      }
-      if (isFallback) answerEvent.is_fallback = true
+    const answerEvent = buildHistoricalAgentAnswerEvent(messageContent, isCompleted, isFallback)
+    if (answerEvent) {
       events.push(answerEvent)
     } else if (isCompleted) {
       events.push({

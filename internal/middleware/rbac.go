@@ -313,17 +313,16 @@ func RequireKBFeedbackGovernance(cfg *config.Config) gin.HandlerFunc {
 				_ = c.Error(apperrors.NewNotFoundError("knowledge base not found"))
 				c.Abort()
 				return
-			} else {
-				role := types.TenantRoleFromContext(ctx)
-				uid, _ := types.UserIDFromContext(ctx)
-				isCreator := role.HasPermission(types.TenantRoleContributor) &&
-					access.KnowledgeBase.CreatorID != "" && access.KnowledgeBase.CreatorID == uid
-				isVerifiedAdmin := role.HasPermission(types.TenantRoleAdmin) &&
-					types.IsTenantRoleVerifiedFromContext(ctx)
-				if isCreator || isVerifiedAdmin {
-					c.Next()
-					return
-				}
+			}
+			role := types.TenantRoleFromContext(ctx)
+			uid, _ := types.UserIDFromContext(ctx)
+			isCreator := role.HasPermission(types.TenantRoleContributor) &&
+				access.KnowledgeBase.CreatorID != "" && access.KnowledgeBase.CreatorID == uid
+			isVerifiedAdmin := role.HasPermission(types.TenantRoleAdmin) &&
+				types.IsTenantRoleVerifiedFromContext(ctx)
+			if isCreator || isVerifiedAdmin {
+				c.Next()
+				return
 			}
 		}
 		uid, _ := types.UserIDFromContext(ctx)
@@ -331,7 +330,10 @@ func RequireKBFeedbackGovernance(cfg *config.Config) gin.HandlerFunc {
 		if access != nil {
 			callerTenantID = access.CallerTenantID
 		}
-		logger.Warnf(ctx, "[rbac] chunk feedback governance denied: user=%s tenant=%d path=%s", uid, callerTenantID, c.Request.URL.Path)
+		logger.Warnf(
+			ctx, "[rbac] chunk feedback governance denied: user=%s tenant=%d path=%s",
+			uid, callerTenantID, c.Request.URL.Path,
+		)
 		if svc := AuditServiceFromContext(c); svc != nil {
 			_ = svc.LogDenied(ctx, c, callerTenantID, uid, string(types.TenantRoleFromContext(ctx)), "kb_feedback_governance")
 		}

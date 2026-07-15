@@ -83,6 +83,7 @@ func (c *PipelineRequest) CitationsEnabled() bool {
 // QueryIntent represents the classified intent of a user query.
 type QueryIntent string
 
+//nolint:revive // Pipeline event names follow the established all-caps convention.
 const (
 	IntentKBSearch      QueryIntent = "kb_search"
 	IntentWebSearch     QueryIntent = "web_search"
@@ -117,6 +118,7 @@ type PipelineState struct {
 
 	SearchResult         []*SearchResult   `json:"-"`
 	RerankResult         []*SearchResult   `json:"-"`
+	RerankMMRPending     bool              `json:"-"`
 	MergeResult          []*SearchResult   `json:"-"`
 	Entity               []string          `json:"-"`
 	EntityKBIDs          []string          `json:"-"`
@@ -245,6 +247,7 @@ func (c *ChatManage) Clone() *ChatManage {
 		PipelineState: PipelineState{
 			RewriteQuery:         c.RewriteQuery,
 			Intent:               c.Intent,
+			RerankMMRPending:     c.RerankMMRPending,
 			ImageDescription:     c.ImageDescription,
 			QuotedContext:        c.QuotedContext,
 			SystemPromptOverride: c.SystemPromptOverride,
@@ -267,7 +270,7 @@ const (
 	ENTITY_SEARCH          EventType = "entity_search"
 	CHUNK_RERANK           EventType = "chunk_rerank"
 	WEB_FETCH              EventType = "web_fetch"
-	CHUNK_FEEDBACK_WEIGHT  EventType = "chunk_feedback_weight"
+	CHUNK_FEEDBACK_WEIGHT  EventType = "chunk_feedback_weight" //nolint:revive
 	CHUNK_MERGE            EventType = "chunk_merge"
 	DATA_ANALYSIS          EventType = "data_analysis"
 	INTO_CHAT_MESSAGE      EventType = "into_chat_message"

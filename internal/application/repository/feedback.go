@@ -19,6 +19,22 @@ type feedbackRepository struct {
 	db *gorm.DB
 }
 
+const (
+	feedbackRefJoin = "JOIN message_chunk_references AS ref " +
+		"ON ref.session_tenant_id = feedback.session_tenant_id " +
+		"AND ref.session_id = feedback.session_id " +
+		"AND ref.message_id = feedback.message_id"
+	feedbackReferenceJoin = "JOIN message_chunk_references AS reference " +
+		"ON reference.session_tenant_id = feedback.session_tenant_id " +
+		"AND reference.session_id = feedback.session_id " +
+		"AND reference.message_id = feedback.message_id"
+	chunkKnowledgeJoin = "LEFT JOIN knowledges AS knowledge " +
+		"ON knowledge.id = chunk.knowledge_id " +
+		"AND knowledge.tenant_id = chunk.tenant_id " +
+		"AND knowledge.deleted_at IS NULL"
+)
+
+// NewFeedbackRepository creates a transactional feedback repository.
 func NewFeedbackRepository(db *gorm.DB) interfaces.FeedbackRepository {
 	return &feedbackRepository{db: db}
 }
@@ -164,7 +180,7 @@ func nextMicrosecond(value time.Time) time.Time {
 
 func lockFeedbackMessage(tx *gorm.DB, sessionID, messageID string) error {
 	query := tx.Select("id").Where("session_id = ? AND id = ?", sessionID, messageID)
-	if tx.Dialector.Name() != "sqlite" {
+	if tx.Name() != "sqlite" {
 		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
 	}
 	var message types.Message
@@ -218,7 +234,7 @@ func lockReferencedChunks(tx *gorm.DB, refs []*types.MessageChunkReference) ([]*
 		args = append(args, k.tenantID, k.chunkID)
 	}
 	query := tx.Where(strings.Join(conditions, " OR "), args...).Order("tenant_id ASC, id ASC")
-	if tx.Dialector.Name() != "sqlite" {
+	if tx.Name() != "sqlite" {
 		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
 	}
 	var chunks []*types.Chunk
@@ -236,7 +252,7 @@ func lockMessageFeedback(
 		"session_tenant_id = ? AND user_id = ? AND message_id = ?",
 		mutation.SessionTenantID, mutation.UserID, mutation.MessageID,
 	)
-	if tx.Dialector.Name() != "sqlite" {
+	if tx.Name() != "sqlite" {
 		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
 	}
 	var feedback types.MessageFeedback
@@ -348,7 +364,7 @@ func recalculateChunkFeedback(
 				"COALESCE(SUM(CASE WHEN feedback.feedback_type = ? THEN 1 ELSE 0 END), 0) AS dislike_count",
 			types.FeedbackTypeLike, types.FeedbackTypeDislike,
 		).
-		Joins("JOIN message_chunk_references AS ref ON ref.session_tenant_id = feedback.session_tenant_id AND ref.session_id = feedback.session_id AND ref.message_id = feedback.message_id").
+		Joins(feedbackRefJoin).
 		Where("ref.chunk_tenant_id = ? AND ref.chunk_id = ?", chunk.TenantID, chunk.ID)
 	if chunk.FeedbackResetAt != nil {
 		query = query.Where("feedback.feedback_at > ?", *chunk.FeedbackResetAt)
@@ -498,7 +514,7 @@ func (r *feedbackRepository) ListChunkFeedback(
 
 func chunkFeedbackBaseQuery(db *gorm.DB, tenantID uint64, kbID string) *gorm.DB {
 	return db.Table("chunks AS chunk").
-		Joins("LEFT JOIN knowledges AS knowledge ON knowledge.id = chunk.knowledge_id AND knowledge.tenant_id = chunk.tenant_id AND knowledge.deleted_at IS NULL").
+		Joins(chunkKnowledgeJoin).
 		Where("chunk.tenant_id = ? AND chunk.knowledge_base_id = ? AND chunk.deleted_at IS NULL", tenantID, kbID)
 }
 
@@ -517,13 +533,16 @@ func (r *feedbackRepository) GetChunkFeedbackDetail(
 	reasonQuery := r.db.WithContext(ctx).
 		Table("message_feedbacks AS feedback").
 		Select("feedback.reason_code, COUNT(DISTINCT feedback.id) AS count").
-		Joins("JOIN message_chunk_references AS reference ON reference.session_tenant_id = feedback.session_tenant_id AND reference.session_id = feedback.session_id AND reference.message_id = feedback.message_id").
+		Joins(feedbackReferenceJoin).
 		Where("reference.chunk_tenant_id = ? AND reference.chunk_id = ?", tenantID, chunkID).
 		Where("feedback.feedback_type = ? AND feedback.reason_code <> ''", types.FeedbackTypeDislike)
 	if item.FeedbackResetAt != nil {
 		reasonQuery = reasonQuery.Where("feedback.feedback_at > ?", *item.FeedbackResetAt)
 	}
-	if err := reasonQuery.Group("feedback.reason_code").Order("count DESC, feedback.reason_code ASC").Scan(&reasons).Error; err != nil {
+	if err := reasonQuery.
+		Group("feedback.reason_code").
+		Order("count DESC, feedback.reason_code ASC").
+		Scan(&reasons).Error; err != nil {
 		return nil, err
 	}
 	return &types.ChunkFeedbackDetail{
@@ -633,7 +652,7 @@ func (r *feedbackRepository) ResetChunkFeedback(
 	var detail *types.ChunkFeedbackDetail
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		query := tx.Where("tenant_id = ? AND knowledge_base_id = ? AND id = ?", tenantID, kbID, chunkID)
-		if tx.Dialector.Name() != "sqlite" {
+		if tx.Name() != "sqlite" {
 			query = query.Clauses(clause.Locking{Strength: "UPDATE"})
 		}
 		var chunk types.Chunk
@@ -647,7 +666,7 @@ func (r *feedbackRepository) ResetChunkFeedback(
 		var latest types.MessageFeedback
 		latestErr := tx.Table("message_feedbacks AS feedback").
 			Select("feedback.feedback_at").
-			Joins("JOIN message_chunk_references AS reference ON reference.session_tenant_id = feedback.session_tenant_id AND reference.session_id = feedback.session_id AND reference.message_id = feedback.message_id").
+			Joins(feedbackReferenceJoin).
 			Where("reference.chunk_tenant_id = ? AND reference.chunk_id = ?", tenantID, chunkID).
 			Order("feedback.feedback_at DESC").
 			Take(&latest).Error

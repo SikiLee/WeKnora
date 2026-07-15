@@ -367,14 +367,8 @@ func (t *KnowledgeSearchTool) Execute(ctx context.Context, args json.RawMessage)
 	logger.Infof(ctx, "[Tool][KnowledgeSearch] After final deduplication: %d results (from %d)",
 		len(deduplicatedResults), len(filteredResults))
 
-	// Sort results by score (descending)
-	sort.Slice(deduplicatedResults, func(i, j int) bool {
-		if deduplicatedResults[i].Score != deduplicatedResults[j].Score {
-			return deduplicatedResults[i].Score > deduplicatedResults[j].Score
-		}
-		// If scores are equal, sort by knowledge ID for consistency
-		return deduplicatedResults[i].KnowledgeID < deduplicatedResults[j].KnowledgeID
-	})
+	// Keep feedback-created score ties in their prior relevance order.
+	stableSortAgentSearchResults(deduplicatedResults)
 
 	// Log all ranked results (including lower ranks for rerank debugging)
 	if len(deduplicatedResults) > 0 {

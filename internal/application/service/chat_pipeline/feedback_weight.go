@@ -23,6 +23,7 @@ type PluginFeedbackWeight struct {
 	chunkRepo chunkRecallWeightReader
 }
 
+// NewPluginFeedbackWeight registers the recall-weight stage with the pipeline.
 func NewPluginFeedbackWeight(
 	eventManager *EventManager,
 	chunkRepo interfaces.ChunkRepository,
@@ -32,18 +33,24 @@ func NewPluginFeedbackWeight(
 	return plugin
 }
 
+// ActivationEvents returns the pipeline event handled by this plugin.
 func (p *PluginFeedbackWeight) ActivationEvents() []types.EventType {
 	return []types.EventType{types.CHUNK_FEEDBACK_WEIGHT}
 }
 
+// OnEvent applies feedback weights and finalizes deferred MMR selection.
 func (p *PluginFeedbackWeight) OnEvent(
 	ctx context.Context,
-	eventType types.EventType,
+	_ types.EventType,
 	chatManage *types.ChatManage,
 	next func() *PluginError,
 ) *PluginError {
-	if chatManage == nil || !chatManage.NeedsRetrieval() || p.chunkRepo == nil {
+	finish := func() *PluginError {
+		finalizePendingRerankMMR(ctx, chatManage)
 		return next()
+	}
+	if chatManage == nil || !chatManage.NeedsRetrieval() || p.chunkRepo == nil {
+		return finish()
 	}
 
 	results := chatManage.RerankResult
@@ -51,7 +58,7 @@ func (p *PluginFeedbackWeight) OnEvent(
 		results = chatManage.SearchResult
 	}
 	if len(results) == 0 {
-		return next()
+		return finish()
 	}
 
 	tenantByKB := chatManage.SearchTargets.GetKBTenantMap()
@@ -99,7 +106,7 @@ func (p *PluginFeedbackWeight) OnEvent(
 		})
 	}
 	if len(scopes) == 0 {
-		return next()
+		return finish()
 	}
 
 	weights, err := p.chunkRepo.ListChunkRecallWeights(ctx, scopes)
@@ -108,7 +115,7 @@ func (p *PluginFeedbackWeight) OnEvent(
 			"error":         err.Error(),
 			"candidate_cnt": len(candidates),
 		})
-		return next()
+		return finish()
 	}
 
 	weightByScope := make(map[string]float64, len(weights))
@@ -140,7 +147,20 @@ func (p *PluginFeedbackWeight) OnEvent(
 		"candidate_cnt": len(candidates),
 		"weighted_cnt":  len(weightByScope),
 	})
-	return next()
+	return finish()
+}
+
+func finalizePendingRerankMMR(ctx context.Context, chatManage *types.ChatManage) {
+	if chatManage == nil || !chatManage.RerankMMRPending {
+		return
+	}
+	chatManage.RerankMMRPending = false
+	results := chatManage.RerankResult
+	if len(results) == 0 {
+		return
+	}
+	k := min(len(results), max(1, chatManage.RerankTopK))
+	chatManage.RerankResult = applyMMR(ctx, results, chatManage, k, 0.7)
 }
 
 func isFeedbackWeightEligible(result *types.SearchResult) bool {

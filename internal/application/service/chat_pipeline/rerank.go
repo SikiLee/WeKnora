@@ -220,8 +220,10 @@ func (p *PluginRerank) OnEvent(ctx context.Context,
 		reranked = append(reranked, sr)
 	}
 
-	final := applyMMR(ctx, reranked, chatManage, min(len(reranked), max(1, chatManage.RerankTopK)), 0.7)
-	chatManage.RerankResult = final
+	// Feedback weights must see every model-ranked candidate before MMR applies
+	// the final top-k selection. The feedback stage finalizes the pending MMR.
+	chatManage.RerankResult = reranked
+	chatManage.RerankMMRPending = len(reranked) > 0
 
 	// Log composite top scores and MMR selection summary
 	topN := min(3, len(reranked))
@@ -259,8 +261,10 @@ func (p *PluginRerank) OnEvent(ctx context.Context,
 		chatManage,
 		thresholdDegraded,
 	)
+	spanOutput["mmr_deferred"] = chatManage.RerankMMRPending
 	pipelineInfo(ctx, "Rerank", "output", map[string]interface{}{
 		"filtered_cnt": len(chatManage.RerankResult),
+		"mmr_deferred": chatManage.RerankMMRPending,
 	})
 	return next()
 }

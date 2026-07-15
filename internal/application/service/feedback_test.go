@@ -149,11 +149,20 @@ func setupFeedbackServiceTest(t *testing.T) *feedbackServiceFixture {
 		Content:     "answer",
 		IsCompleted: true,
 		KnowledgeReferences: types.References{
-			{ID: sharedChunk.ID, KnowledgeID: sharedChunk.KnowledgeID, KnowledgeBaseID: sharedChunk.KnowledgeBaseID, Score: 0.9, MatchType: types.MatchTypeEmbedding},
-			{ID: sharedChunk.ID, KnowledgeID: sharedChunk.KnowledgeID, KnowledgeBaseID: sharedChunk.KnowledgeBaseID, Score: 0.8, MatchType: types.MatchTypeKeywords},
+			{
+				ID: sharedChunk.ID, KnowledgeID: sharedChunk.KnowledgeID,
+				KnowledgeBaseID: sharedChunk.KnowledgeBaseID, Score: 0.9, MatchType: types.MatchTypeEmbedding,
+			},
+			{
+				ID: sharedChunk.ID, KnowledgeID: sharedChunk.KnowledgeID,
+				KnowledgeBaseID: sharedChunk.KnowledgeBaseID, Score: 0.8, MatchType: types.MatchTypeKeywords,
+			},
 			{ID: "https://example.com", KnowledgeSource: "web_search", MatchType: types.MatchTypeWebSearch},
 			{ID: "history-id", MatchType: types.MatchTypeHistory},
-			{ID: sharedChunk.ID, KnowledgeID: "forged-knowledge", KnowledgeBaseID: sharedChunk.KnowledgeBaseID, MatchType: types.MatchTypeEmbedding},
+			{
+				ID: sharedChunk.ID, KnowledgeID: "forged-knowledge",
+				KnowledgeBaseID: sharedChunk.KnowledgeBaseID, MatchType: types.MatchTypeEmbedding,
+			},
 		},
 	}
 	insertServiceFeedbackMessage(t, db, message)
@@ -304,8 +313,14 @@ func TestFeedbackServiceSkipsDeletedChunkAndPersistsValidChunk(t *testing.T) {
 		t.Fatalf("soft-delete chunk: %v", err)
 	}
 	f.message.KnowledgeReferences = types.References{
-		{ID: deleted.ID, KnowledgeID: deleted.KnowledgeID, KnowledgeBaseID: deleted.KnowledgeBaseID, MatchType: types.MatchTypeEmbedding},
-		{ID: f.sharedChunk.ID, KnowledgeID: f.sharedChunk.KnowledgeID, KnowledgeBaseID: f.sharedChunk.KnowledgeBaseID, MatchType: types.MatchTypeEmbedding},
+		{
+			ID: deleted.ID, KnowledgeID: deleted.KnowledgeID,
+			KnowledgeBaseID: deleted.KnowledgeBaseID, MatchType: types.MatchTypeEmbedding,
+		},
+		{
+			ID: f.sharedChunk.ID, KnowledgeID: f.sharedChunk.KnowledgeID,
+			KnowledgeBaseID: f.sharedChunk.KnowledgeBaseID, MatchType: types.MatchTypeEmbedding,
+		},
 	}
 	if err := f.service.PersistMessageChunkReferences(f.ctx, f.message); err != nil {
 		t.Fatalf("persist mixed references: %v", err)
@@ -354,6 +369,49 @@ func TestFeedbackServiceLazyFallbackAndCallerIsolation(t *testing.T) {
 	}
 }
 
+func TestFeedbackServiceRechecksTenantAPIKeyKnowledgeBaseAllowList(t *testing.T) {
+	f := setupFeedbackServiceTest(t)
+	if err := f.service.PersistMessageChunkReferences(f.ctx, f.message); err != nil {
+		t.Fatalf("persist references: %v", err)
+	}
+	revokedCtx := types.WithTenantAPIKeyScope(f.ctx, types.TenantAPIKeyScope{
+		KeyID:            99,
+		KnowledgeBaseIDs: types.StringArray{"different-kb"},
+	})
+	_, err := f.service.SetMessageFeedback(
+		revokedCtx, f.session.ID, f.message.ID,
+		&types.MessageFeedbackInput{FeedbackType: types.FeedbackTypeLike},
+	)
+	if !errors.Is(err, types.ErrFeedbackUnauthorized) {
+		t.Fatalf("revoked allow-list error = %v, want unauthorized", err)
+	}
+
+	var feedbackCount int64
+	if err := f.db.Model(&types.MessageFeedback{}).
+		Where("message_id = ?", f.message.ID).
+		Count(&feedbackCount).Error; err != nil {
+		t.Fatalf("count feedback: %v", err)
+	}
+	var chunk types.Chunk
+	if err := f.db.Where("id = ?", f.sharedChunk.ID).First(&chunk).Error; err != nil {
+		t.Fatalf("load chunk: %v", err)
+	}
+	if feedbackCount != 0 || chunk.LikeCount != 0 || chunk.DislikeCount != 0 || chunk.RecallWeight != 1 {
+		t.Fatalf("revoked key mutated feedback: count=%d chunk=%#v", feedbackCount, chunk)
+	}
+
+	allowedCtx := types.WithTenantAPIKeyScope(f.ctx, types.TenantAPIKeyScope{
+		KeyID:            99,
+		KnowledgeBaseIDs: types.StringArray{f.sharedChunk.KnowledgeBaseID},
+	})
+	if _, err := f.service.SetMessageFeedback(
+		allowedCtx, f.session.ID, f.message.ID,
+		&types.MessageFeedbackInput{FeedbackType: types.FeedbackTypeLike},
+	); err != nil {
+		t.Fatalf("allowed key feedback: %v", err)
+	}
+}
+
 func TestFeedbackServiceRejectsInvalidMessageAndReason(t *testing.T) {
 	f := setupFeedbackServiceTest(t)
 	_, err := f.service.SetMessageFeedback(f.ctx, f.session.ID, f.message.ID, &types.MessageFeedbackInput{
@@ -366,14 +424,20 @@ func TestFeedbackServiceRejectsInvalidMessageAndReason(t *testing.T) {
 
 	incomplete := &types.Message{SessionID: f.session.ID, Role: "assistant", Content: "partial", IsCompleted: false}
 	insertServiceFeedbackMessage(t, f.db, incomplete)
-	_, err = f.service.SetMessageFeedback(f.ctx, f.session.ID, incomplete.ID, &types.MessageFeedbackInput{FeedbackType: types.FeedbackTypeLike})
+	_, err = f.service.SetMessageFeedback(
+		f.ctx, f.session.ID, incomplete.ID,
+		&types.MessageFeedbackInput{FeedbackType: types.FeedbackTypeLike},
+	)
 	if !errors.Is(err, types.ErrFeedbackMessageIncomplete) {
 		t.Fatalf("incomplete message error = %v", err)
 	}
 
 	userMessage := &types.Message{SessionID: f.session.ID, Role: "user", Content: "question", IsCompleted: true}
 	insertServiceFeedbackMessage(t, f.db, userMessage)
-	_, err = f.service.SetMessageFeedback(f.ctx, f.session.ID, userMessage.ID, &types.MessageFeedbackInput{FeedbackType: types.FeedbackTypeLike})
+	_, err = f.service.SetMessageFeedback(
+		f.ctx, f.session.ID, userMessage.ID,
+		&types.MessageFeedbackInput{FeedbackType: types.FeedbackTypeLike},
+	)
 	if !errors.Is(err, types.ErrFeedbackMessageIncomplete) {
 		t.Fatalf("user message error = %v", err)
 	}
@@ -391,7 +455,10 @@ func TestFeedbackServicePreservesRepositoryFailures(t *testing.T) {
 			f.chunkRepo,
 			&config.Config{Feedback: types.DefaultChunkFeedbackConfig()},
 		)
-		_, err := svc.SetMessageFeedback(f.ctx, f.session.ID, f.message.ID, &types.MessageFeedbackInput{FeedbackType: types.FeedbackTypeLike})
+		_, err := svc.SetMessageFeedback(
+			f.ctx, f.session.ID, f.message.ID,
+			&types.MessageFeedbackInput{FeedbackType: types.FeedbackTypeLike},
+		)
 		if !errors.Is(err, dbErr) || errors.Is(err, types.ErrFeedbackMessageNotFound) {
 			t.Fatalf("session repository error = %v", err)
 		}
@@ -405,7 +472,10 @@ func TestFeedbackServicePreservesRepositoryFailures(t *testing.T) {
 			f.chunkRepo,
 			&config.Config{Feedback: types.DefaultChunkFeedbackConfig()},
 		)
-		_, err := svc.SetMessageFeedback(f.ctx, f.session.ID, f.message.ID, &types.MessageFeedbackInput{FeedbackType: types.FeedbackTypeLike})
+		_, err := svc.SetMessageFeedback(
+			f.ctx, f.session.ID, f.message.ID,
+			&types.MessageFeedbackInput{FeedbackType: types.FeedbackTypeLike},
+		)
 		if !errors.Is(err, dbErr) || errors.Is(err, types.ErrFeedbackMessageNotFound) {
 			t.Fatalf("message repository error = %v", err)
 		}
@@ -435,33 +505,48 @@ func TestFeedbackServicePrincipalIsolationAndLongExternalUserID(t *testing.T) {
 		ctx = types.WithPrincipal(ctx, types.Principal{Type: types.PrincipalAPITenant, ID: "1"})
 		return types.WithTenantAPIKeyScope(ctx, types.TenantAPIKeyScope{KeyID: keyID})
 	}
-	if _, err := f.service.SetMessageFeedback(keyContext(101), legacySession.ID, legacyMessage.ID, &types.MessageFeedbackInput{FeedbackType: types.FeedbackTypeLike}); err != nil {
+	if _, err := f.service.SetMessageFeedback(
+		keyContext(101), legacySession.ID, legacyMessage.ID,
+		&types.MessageFeedbackInput{FeedbackType: types.FeedbackTypeLike},
+	); err != nil {
 		t.Fatalf("first tenant API key feedback: %v", err)
 	}
-	if _, err := f.service.SetMessageFeedback(keyContext(202), legacySession.ID, legacyMessage.ID, &types.MessageFeedbackInput{
-		FeedbackType: types.FeedbackTypeDislike,
-		ReasonCode:   types.FeedbackReasonIncorrect,
-	}); err != nil {
+	if _, err := f.service.SetMessageFeedback(
+		keyContext(202), legacySession.ID, legacyMessage.ID,
+		&types.MessageFeedbackInput{
+			FeedbackType: types.FeedbackTypeDislike,
+			ReasonCode:   types.FeedbackReasonIncorrect,
+		},
+	); err != nil {
 		t.Fatalf("second tenant API key feedback: %v", err)
 	}
 	var keyFeedbacks []*types.MessageFeedback
-	if err := f.db.Where("message_id = ?", legacyMessage.ID).Order("user_id").Find(&keyFeedbacks).Error; err != nil {
+	if err := f.db.Where("message_id = ?", legacyMessage.ID).
+		Order("user_id").Find(&keyFeedbacks).Error; err != nil {
 		t.Fatalf("load API key feedbacks: %v", err)
 	}
 	if len(keyFeedbacks) != 2 || keyFeedbacks[0].UserID == keyFeedbacks[1].UserID {
 		t.Fatalf("tenant API key feedbacks = %#v", keyFeedbacks)
 	}
 
-	externalPrincipal := types.Principal{Type: types.PrincipalAPIExternalUser, ID: "1:" + strings.Repeat("x", 128)}
+	externalPrincipal := types.Principal{
+		Type: types.PrincipalAPIExternalUser,
+		ID:   "1:" + strings.Repeat("x", 128),
+	}
 	externalSession := &types.Session{TenantID: 1, UserID: externalPrincipal.StorageID(), Title: "external"}
 	if err := f.db.Create(externalSession).Error; err != nil {
 		t.Fatalf("create external session: %v", err)
 	}
-	externalMessage := &types.Message{SessionID: externalSession.ID, Role: "assistant", Content: "external answer", IsCompleted: true}
+	externalMessage := &types.Message{
+		SessionID: externalSession.ID, Role: "assistant", Content: "external answer", IsCompleted: true,
+	}
 	insertServiceFeedbackMessage(t, f.db, externalMessage)
 	externalCtx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(1))
 	externalCtx = types.WithPrincipal(externalCtx, externalPrincipal)
-	if _, err := f.service.SetMessageFeedback(externalCtx, externalSession.ID, externalMessage.ID, &types.MessageFeedbackInput{FeedbackType: types.FeedbackTypeLike}); err != nil {
+	if _, err := f.service.SetMessageFeedback(
+		externalCtx, externalSession.ID, externalMessage.ID,
+		&types.MessageFeedbackInput{FeedbackType: types.FeedbackTypeLike},
+	); err != nil {
 		t.Fatalf("long external principal feedback: %v", err)
 	}
 	var externalFeedback types.MessageFeedback
@@ -475,7 +560,10 @@ func TestFeedbackServicePrincipalIsolationAndLongExternalUserID(t *testing.T) {
 
 func TestMessageServiceRestoresFeedbackStateInOneHistoryRead(t *testing.T) {
 	f := setupFeedbackServiceTest(t)
-	if _, err := f.service.SetMessageFeedback(f.ctx, f.session.ID, f.message.ID, &types.MessageFeedbackInput{FeedbackType: types.FeedbackTypeLike}); err != nil {
+	if _, err := f.service.SetMessageFeedback(
+		f.ctx, f.session.ID, f.message.ID,
+		&types.MessageFeedbackInput{FeedbackType: types.FeedbackTypeLike},
+	); err != nil {
 		t.Fatalf("set feedback: %v", err)
 	}
 	messageService := service.NewMessageService(
@@ -485,7 +573,8 @@ func TestMessageServiceRestoresFeedbackStateInOneHistoryRead(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get history: %v", err)
 	}
-	if len(messages) != 1 || messages[0].Feedback == nil || messages[0].Feedback.FeedbackType != types.FeedbackTypeLike {
+	if len(messages) != 1 || messages[0].Feedback == nil ||
+		messages[0].Feedback.FeedbackType != types.FeedbackTypeLike {
 		t.Fatalf("history feedback state = %#v", messages)
 	}
 	message, err := messageService.GetMessage(f.ctx, f.session.ID, f.message.ID)
@@ -493,11 +582,15 @@ func TestMessageServiceRestoresFeedbackStateInOneHistoryRead(t *testing.T) {
 		t.Fatalf("single message feedback state = %#v err=%v", message, err)
 	}
 	recent, err := messageService.GetRecentMessagesBySession(f.ctx, f.session.ID, 10)
-	if err != nil || len(recent) != 1 || recent[0].Feedback == nil || recent[0].Feedback.FeedbackType != types.FeedbackTypeLike {
+	if err != nil || len(recent) != 1 || recent[0].Feedback == nil ||
+		recent[0].Feedback.FeedbackType != types.FeedbackTypeLike {
 		t.Fatalf("recent feedback state = %#v err=%v", recent, err)
 	}
-	before, err := messageService.GetMessagesBySessionBeforeTime(f.ctx, f.session.ID, f.message.CreatedAt.Add(time.Second), 10)
-	if err != nil || len(before) != 1 || before[0].Feedback == nil || before[0].Feedback.FeedbackType != types.FeedbackTypeLike {
+	before, err := messageService.GetMessagesBySessionBeforeTime(
+		f.ctx, f.session.ID, f.message.CreatedAt.Add(time.Second), 10,
+	)
+	if err != nil || len(before) != 1 || before[0].Feedback == nil ||
+		before[0].Feedback.FeedbackType != types.FeedbackTypeLike {
 		t.Fatalf("before-time feedback state = %#v err=%v", before, err)
 	}
 }

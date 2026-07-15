@@ -18,6 +18,7 @@ type ChunkFeedbackHandler struct {
 	service interfaces.FeedbackService
 }
 
+// NewChunkFeedbackHandler creates the KB-scoped feedback governance handler.
 func NewChunkFeedbackHandler(service interfaces.FeedbackService) *ChunkFeedbackHandler {
 	return &ChunkFeedbackHandler{service: service}
 }
@@ -40,11 +41,11 @@ func NewChunkFeedbackHandler(service interfaces.FeedbackService) *ChunkFeedbackH
 func (h *ChunkFeedbackHandler) List(c *gin.Context) {
 	var query types.ChunkFeedbackListQuery
 	if err := c.ShouldBindQuery(&query); err != nil {
-		c.Error(apperrors.NewBadRequestError("invalid chunk feedback query").WithDetails(err.Error()))
+		_ = c.Error(apperrors.NewBadRequestError("invalid chunk feedback query").WithDetails(err.Error()))
 		return
 	}
 	if err := query.Validate(); err != nil {
-		c.Error(apperrors.NewValidationError(err.Error()))
+		_ = c.Error(apperrors.NewValidationError(err.Error()))
 		return
 	}
 	result, err := h.service.ListChunkFeedback(c.Request.Context(), chunkFeedbackKBID(c), &query)
@@ -92,7 +93,7 @@ func (h *ChunkFeedbackHandler) WeightLogs(c *gin.Context) {
 		return
 	}
 	if err := types.ValidateChunkFeedbackPagination(page, pageSize); err != nil {
-		c.Error(apperrors.NewValidationError(err.Error()))
+		_ = c.Error(apperrors.NewValidationError(err.Error()))
 		return
 	}
 	result, err := h.service.ListChunkFeedbackWeightLogs(
@@ -119,12 +120,18 @@ func (h *ChunkFeedbackHandler) WeightLogs(c *gin.Context) {
 // @Router /knowledge-bases/{id}/chunk-feedback/{chunk_id}/reset [post]
 func (h *ChunkFeedbackHandler) Reset(c *gin.Context) {
 	input := &types.ChunkFeedbackResetInput{}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 8<<10)
 	if err := c.ShouldBindJSON(input); err != nil && !stderrors.Is(err, io.EOF) {
-		c.Error(apperrors.NewBadRequestError("invalid chunk feedback reset request").WithDetails(err.Error()))
+		var maxBytesError *http.MaxBytesError
+		if stderrors.As(err, &maxBytesError) {
+			_ = c.Error(apperrors.NewBadRequestError("chunk feedback reset request is too large"))
+			return
+		}
+		_ = c.Error(apperrors.NewBadRequestError("invalid chunk feedback reset request").WithDetails(err.Error()))
 		return
 	}
 	if err := input.Validate(); err != nil {
-		c.Error(apperrors.NewValidationError(err.Error()))
+		_ = c.Error(apperrors.NewValidationError(err.Error()))
 		return
 	}
 	detail, err := h.service.ResetChunkFeedback(
@@ -147,11 +154,11 @@ func chunkFeedbackKBID(c *gin.Context) string {
 func (h *ChunkFeedbackHandler) handleError(c *gin.Context, err error) {
 	switch {
 	case stderrors.Is(err, types.ErrChunkFeedbackNotFound):
-		c.Error(apperrors.NewNotFoundError("chunk not found"))
+		_ = c.Error(apperrors.NewNotFoundError("chunk not found"))
 	case stderrors.Is(err, types.ErrFeedbackUnauthorized):
-		c.Error(apperrors.NewForbiddenError("feedback governance is not authorized"))
+		_ = c.Error(apperrors.NewForbiddenError("feedback governance is not authorized"))
 	default:
 		logger.ErrorWithFields(c.Request.Context(), err, nil)
-		c.Error(apperrors.NewInternalServerError("chunk feedback operation failed"))
+		_ = c.Error(apperrors.NewInternalServerError("chunk feedback operation failed"))
 	}
 }

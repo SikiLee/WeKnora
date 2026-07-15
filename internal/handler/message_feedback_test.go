@@ -19,7 +19,9 @@ import (
 
 type messageFeedbackServiceStub struct {
 	interfaces.FeedbackService
-	setFn func(context.Context, string, string, *types.MessageFeedbackInput) (*types.MessageFeedbackState, error)
+	setFn func(
+		context.Context, string, string, *types.MessageFeedbackInput,
+	) (*types.MessageFeedbackState, error)
 }
 
 func (s *messageFeedbackServiceStub) SetMessageFeedback(
@@ -43,11 +45,14 @@ func messageFeedbackHandlerRouter(service interfaces.FeedbackService) *gin.Engin
 func TestMessageFeedbackHandlerSetsFeedback(t *testing.T) {
 	feedbackAt := time.Date(2026, 7, 15, 8, 30, 0, 0, time.UTC)
 	service := &messageFeedbackServiceStub{
-		setFn: func(_ context.Context, sessionID, messageID string, input *types.MessageFeedbackInput) (*types.MessageFeedbackState, error) {
+		setFn: func(
+			_ context.Context, sessionID, messageID string, input *types.MessageFeedbackInput,
+		) (*types.MessageFeedbackState, error) {
 			if sessionID != "session-1" || messageID != "message-1" {
 				t.Fatalf("unexpected target: %s/%s", sessionID, messageID)
 			}
-			if input.FeedbackType != types.FeedbackTypeDislike || input.ReasonCode != types.FeedbackReasonOther || input.ReasonText != "Missing a step" {
+			if input.FeedbackType != types.FeedbackTypeDislike ||
+				input.ReasonCode != types.FeedbackReasonOther || input.ReasonText != "Missing a step" {
 				t.Fatalf("unexpected input: %#v", input)
 			}
 			return &types.MessageFeedbackState{
@@ -76,7 +81,8 @@ func TestMessageFeedbackHandlerSetsFeedback(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if !response.Success || response.Data.FeedbackType != types.FeedbackTypeDislike || !response.Data.FeedbackAt.Equal(feedbackAt) {
+	if !response.Success || response.Data.FeedbackType != types.FeedbackTypeDislike ||
+		!response.Data.FeedbackAt.Equal(feedbackAt) {
 		t.Fatalf("response=%#v", response)
 	}
 }
@@ -99,7 +105,9 @@ func TestMessageFeedbackHandlerRejectsInvalidBodies(t *testing.T) {
 	for _, body := range tests {
 		called = false
 		w := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodPut, "/messages/session-1/message-1/feedback", strings.NewReader(body))
+		req := httptest.NewRequest(
+			http.MethodPut, "/messages/session-1/message-1/feedback", strings.NewReader(body),
+		)
 		req.Header.Set("Content-Type", "application/json")
 		messageFeedbackHandlerRouter(service).ServeHTTP(w, req)
 		if w.Code != http.StatusBadRequest || called {
@@ -116,7 +124,8 @@ func TestMessageFeedbackHandlerRejectsOversizedBodyBeforeServiceCall(t *testing.
 			return nil, nil
 		},
 	}
-	body := `{"feedback_type":"dislike","reason_code":"other","reason_text":"` + strings.Repeat("x", 9<<10) + `"}`
+	body := `{"feedback_type":"dislike","reason_code":"other","reason_text":"` +
+		strings.Repeat("x", 9<<10) + `"}`
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPut, "/messages/session-1/message-1/feedback", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")

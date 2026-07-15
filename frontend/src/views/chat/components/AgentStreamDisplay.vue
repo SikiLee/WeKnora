@@ -316,7 +316,7 @@
                   <t-icon name="bookmark-add" />
                 </t-button>
                 <AnswerFeedbackControls v-if="!embeddedMode" :session-id="sessionId || ''" :message-id="session.id || ''"
-                  :completed="Boolean(isConversationDone)" :feedback="session.feedback"
+                  :completed="Boolean(session.is_completed && isConversationDone)" :feedback="session.feedback"
                   @update:feedback="handleFeedbackUpdated" />
                 <t-tooltip v-if="event.is_fallback" :content="$t('chat.fallbackHint')" placement="top">
                   <t-button size="small" variant="outline" shape="round" class="fallback-icon-btn">
