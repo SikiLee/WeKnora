@@ -1,12 +1,21 @@
 package types
 
 import (
+	"errors"
 	"fmt"
 	"math"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+)
+
+var (
+	ErrFeedbackUnauthorized      = errors.New("feedback caller is not authorized")
+	ErrFeedbackMessageNotFound   = errors.New("feedback message was not found")
+	ErrFeedbackMessageIncomplete = errors.New("only completed assistant messages can be rated")
 )
 
 const (
@@ -107,7 +116,7 @@ func CalculateChunkFeedback(likeCount, dislikeCount int64, cfg *ChunkFeedbackCon
 type MessageFeedback struct {
 	ID              string `json:"id"                gorm:"type:varchar(36);primaryKey"`
 	SessionTenantID uint64 `json:"session_tenant_id" gorm:"index;not null"`
-	UserID          string `json:"user_id"           gorm:"type:varchar(36);not null"`
+	UserID          string `json:"user_id"           gorm:"type:varchar(512);not null"`
 	SessionID       string `json:"session_id"        gorm:"type:varchar(36);index;not null"`
 	MessageID       string `json:"message_id"        gorm:"type:varchar(36);index;not null"`
 	FeedbackType    string `json:"feedback_type"     gorm:"type:varchar(16);not null"`
@@ -116,6 +125,66 @@ type MessageFeedback struct {
 	FeedbackAt      time.Time
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
+}
+
+// MessageFeedbackInput is the caller-controlled state transition for one answer.
+type MessageFeedbackInput struct {
+	FeedbackType string `json:"feedback_type"`
+	ReasonCode   string `json:"reason_code,omitempty"`
+	ReasonText   string `json:"reason_text,omitempty"`
+}
+
+func (i *MessageFeedbackInput) Validate() error {
+	if i == nil {
+		return errors.New("feedback input is required")
+	}
+	i.FeedbackType = strings.TrimSpace(i.FeedbackType)
+	i.ReasonCode = strings.TrimSpace(i.ReasonCode)
+	i.ReasonText = strings.TrimSpace(i.ReasonText)
+	if utf8.RuneCountInString(i.ReasonText) > 500 {
+		return errors.New("feedback reason_text must not exceed 500 characters")
+	}
+
+	switch i.FeedbackType {
+	case FeedbackTypeLike, FeedbackTypeNone:
+		if i.ReasonCode != "" || i.ReasonText != "" {
+			return errors.New("feedback reasons are only valid for dislike")
+		}
+	case FeedbackTypeDislike:
+		switch i.ReasonCode {
+		case FeedbackReasonIncorrect, FeedbackReasonOutdated, FeedbackReasonIrrelevant,
+			FeedbackReasonIncomplete, FeedbackReasonUnclear:
+			if i.ReasonText != "" {
+				return errors.New("reason_text is only valid with reason_code=other")
+			}
+		case FeedbackReasonOther:
+			// Free text is optional for "other", but is length-bounded above.
+		default:
+			return errors.New("invalid dislike reason_code")
+		}
+	default:
+		return errors.New("feedback_type must be like, dislike, or none")
+	}
+	return nil
+}
+
+// MessageFeedbackState is the safe feedback shape attached to message history.
+type MessageFeedbackState struct {
+	FeedbackType string    `json:"feedback_type"`
+	ReasonCode   string    `json:"reason_code,omitempty"`
+	ReasonText   string    `json:"reason_text,omitempty"`
+	FeedbackAt   time.Time `json:"feedback_at"`
+}
+
+// MessageFeedbackMutation contains the trusted fields used by the repository transaction.
+type MessageFeedbackMutation struct {
+	SessionTenantID uint64
+	UserID          string
+	SessionID       string
+	MessageID       string
+	FeedbackType    string
+	ReasonCode      string
+	ReasonText      string
 }
 
 func (m *MessageFeedback) BeforeCreate(tx *gorm.DB) error {

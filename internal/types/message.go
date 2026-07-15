@@ -227,6 +227,8 @@ type Message struct {
 	Attachments MessageAttachments `json:"attachments,omitempty" gorm:"type:jsonb;column:attachments"`
 	// Whether message generation is complete
 	IsCompleted bool `json:"is_completed"`
+	// Feedback contains the current caller's rating and is populated on history reads.
+	Feedback *MessageFeedbackState `json:"feedback,omitempty" gorm:"-"`
 	// Whether this response is a fallback (no knowledge base match found)
 	IsFallback bool `json:"is_fallback,omitempty"`
 	// Agent total execution duration in milliseconds (from query start to answer start)

@@ -9,7 +9,7 @@ ALTER TABLE chunks ADD COLUMN feedback_updated_at DATETIME;
 CREATE TABLE IF NOT EXISTS message_feedbacks (
     id VARCHAR(36) PRIMARY KEY,
     session_tenant_id INTEGER NOT NULL,
-    user_id VARCHAR(36) NOT NULL,
+    user_id VARCHAR(512) NOT NULL,
     session_id VARCHAR(36) NOT NULL,
     message_id VARCHAR(36) NOT NULL,
     feedback_type VARCHAR(16) NOT NULL,

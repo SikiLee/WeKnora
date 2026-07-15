@@ -3,6 +3,7 @@ package types
 import (
 	"encoding/json"
 	"math"
+	"strings"
 	"testing"
 )
 
@@ -82,6 +83,22 @@ func TestCalculateChunkFeedback(t *testing.T) {
 				t.Fatalf("needsOptimization = %v, want %v", gotOptimization, tc.wantOptimization)
 			}
 		})
+	}
+}
+
+func TestMessageFeedbackInputReasonTextCharacterLimit(t *testing.T) {
+	input := &MessageFeedbackInput{
+		FeedbackType: FeedbackTypeDislike,
+		ReasonCode:   FeedbackReasonOther,
+		ReasonText:   strings.Repeat("中", 500),
+	}
+	if err := input.Validate(); err != nil {
+		t.Fatalf("500 Unicode characters should be valid: %v", err)
+	}
+
+	input.ReasonText += "中"
+	if err := input.Validate(); err == nil {
+		t.Fatal("501 Unicode characters should be rejected")
 	}
 }
 

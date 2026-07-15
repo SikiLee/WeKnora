@@ -17,6 +17,7 @@ import (
 // Handler handles all HTTP requests related to conversation sessions
 type Handler struct {
 	messageService       interfaces.MessageService // Service for managing messages
+	feedbackService      interfaces.FeedbackService
 	suggestionService    interfaces.MessageSuggestionService
 	sessionService       interfaces.SessionService       // Service for managing sessions
 	streamManager        interfaces.StreamManager        // Manager for handling streaming responses
@@ -37,6 +38,7 @@ type Handler struct {
 func NewHandler(
 	sessionService interfaces.SessionService,
 	messageService interfaces.MessageService,
+	feedbackService interfaces.FeedbackService,
 	suggestionService interfaces.MessageSuggestionService,
 	streamManager interfaces.StreamManager,
 	config *config.Config,
@@ -55,6 +57,7 @@ func NewHandler(
 	return &Handler{
 		sessionService:       sessionService,
 		messageService:       messageService,
+		feedbackService:      feedbackService,
 		suggestionService:    suggestionService,
 		streamManager:        streamManager,
 		config:               config,

@@ -194,7 +194,7 @@ CREATE INDEX IF NOT EXISTS idx_chunks_chunk_type ON chunks(chunk_type);
 CREATE TABLE IF NOT EXISTS message_feedbacks (
     id VARCHAR(36) PRIMARY KEY,
     session_tenant_id BIGINT NOT NULL,
-    user_id VARCHAR(36) NOT NULL,
+    user_id VARCHAR(512) NOT NULL,
     session_id VARCHAR(36) NOT NULL,
     message_id VARCHAR(36) NOT NULL,
     feedback_type VARCHAR(16) NOT NULL,

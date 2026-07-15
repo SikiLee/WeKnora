@@ -1,0 +1,234 @@
+package service
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strconv"
+	"strings"
+
+	"github.com/Tencent/WeKnora/internal/config"
+	apperrors "github.com/Tencent/WeKnora/internal/errors"
+	"github.com/Tencent/WeKnora/internal/types"
+	"github.com/Tencent/WeKnora/internal/types/interfaces"
+	"gorm.io/gorm"
+)
+
+type feedbackService struct {
+	repo        interfaces.FeedbackRepository
+	sessionRepo interfaces.SessionRepository
+	messageRepo interfaces.MessageRepository
+	chunkRepo   interfaces.ChunkRepository
+	config      *types.ChunkFeedbackConfig
+}
+
+func NewFeedbackService(
+	repo interfaces.FeedbackRepository,
+	sessionRepo interfaces.SessionRepository,
+	messageRepo interfaces.MessageRepository,
+	chunkRepo interfaces.ChunkRepository,
+	cfg *config.Config,
+) interfaces.FeedbackService {
+	feedbackConfig := types.DefaultChunkFeedbackConfig()
+	if cfg != nil && cfg.Feedback != nil {
+		feedbackConfig = cfg.Feedback
+	}
+	return &feedbackService{
+		repo:        repo,
+		sessionRepo: sessionRepo,
+		messageRepo: messageRepo,
+		chunkRepo:   chunkRepo,
+		config:      feedbackConfig,
+	}
+}
+
+func (s *feedbackService) PersistMessageChunkReferences(ctx context.Context, message *types.Message) error {
+	if message == nil || message.ID == "" || message.SessionID == "" {
+		return fmt.Errorf("persist feedback attribution: message identity is required")
+	}
+	if message.Role != "assistant" || !message.IsCompleted {
+		return types.ErrFeedbackMessageIncomplete
+	}
+	sessionTenantID, ok := types.SessionTenantIDFromContext(ctx)
+	if !ok || sessionTenantID == 0 {
+		return fmt.Errorf("persist feedback attribution: session tenant is required")
+	}
+	existing, err := s.repo.ListMessageChunkReferences(ctx, sessionTenantID, message.ID)
+	if err != nil {
+		return err
+	}
+	if len(existing) > 0 {
+		return nil
+	}
+
+	type referenceCandidate struct {
+		result *types.SearchResult
+		rank   int
+	}
+	candidates := make([]referenceCandidate, 0, len(message.KnowledgeReferences))
+	chunkIDs := make([]string, 0, len(message.KnowledgeReferences))
+	seenIDs := make(map[string]struct{}, len(message.KnowledgeReferences))
+	for rank, ref := range message.KnowledgeReferences {
+		if !isFeedbackEligibleReference(ref) {
+			continue
+		}
+		if _, seen := seenIDs[ref.ID]; seen {
+			continue
+		}
+		seenIDs[ref.ID] = struct{}{}
+		chunkIDs = append(chunkIDs, ref.ID)
+		candidates = append(candidates, referenceCandidate{result: ref, rank: rank})
+	}
+	if len(chunkIDs) == 0 {
+		return nil
+	}
+
+	chunks, err := s.chunkRepo.ListChunksByIDOnly(ctx, chunkIDs)
+	if err != nil {
+		return err
+	}
+	chunkByID := make(map[string]*types.Chunk, len(chunks))
+	for _, chunk := range chunks {
+		if chunk != nil {
+			chunkByID[chunk.ID] = chunk
+		}
+	}
+
+	refs := make([]*types.MessageChunkReference, 0, len(candidates))
+	for _, candidate := range candidates {
+		ref := candidate.result
+		chunk := chunkByID[ref.ID]
+		if chunk == nil || chunk.TenantID == 0 {
+			continue
+		}
+		if ref.KnowledgeID != "" && ref.KnowledgeID != chunk.KnowledgeID {
+			continue
+		}
+		if ref.KnowledgeBaseID != "" && ref.KnowledgeBaseID != chunk.KnowledgeBaseID {
+			continue
+		}
+		refs = append(refs, &types.MessageChunkReference{
+			SessionTenantID: sessionTenantID,
+			ChunkTenantID:   chunk.TenantID,
+			SessionID:       message.SessionID,
+			MessageID:       message.ID,
+			ChunkID:         chunk.ID,
+			KnowledgeBaseID: chunk.KnowledgeBaseID,
+			KnowledgeID:     chunk.KnowledgeID,
+			ReferenceRank:   candidate.rank,
+			RetrievalScore:  ref.Score,
+			MatchType:       strconv.Itoa(int(ref.MatchType)),
+		})
+	}
+	return s.repo.CreateMessageChunkReferences(ctx, refs)
+}
+
+func isFeedbackEligibleReference(ref *types.SearchResult) bool {
+	if ref == nil || strings.TrimSpace(ref.ID) == "" {
+		return false
+	}
+	if ref.MatchType == types.MatchTypeHistory || ref.MatchType == types.MatchTypeWebSearch {
+		return false
+	}
+	source := strings.ToLower(strings.TrimSpace(ref.KnowledgeSource))
+	return source != "web_search" && source != "history"
+}
+
+func (s *feedbackService) SetMessageFeedback(
+	ctx context.Context,
+	sessionID string,
+	messageID string,
+	input *types.MessageFeedbackInput,
+) (*types.MessageFeedbackState, error) {
+	if err := input.Validate(); err != nil {
+		return nil, err
+	}
+	sessionTenantID, userID, message, err := s.authorizeMessage(ctx, sessionID, messageID)
+	if err != nil {
+		return nil, err
+	}
+
+	refs, err := s.repo.ListMessageChunkReferences(ctx, sessionTenantID, messageID)
+	if err != nil {
+		return nil, err
+	}
+	if len(refs) == 0 {
+		if err := s.PersistMessageChunkReferences(ctx, message); err != nil {
+			return nil, fmt.Errorf("persist feedback attribution fallback: %w", err)
+		}
+	}
+
+	feedback, err := s.repo.ApplyMessageFeedback(ctx, types.MessageFeedbackMutation{
+		SessionTenantID: sessionTenantID,
+		UserID:          userID,
+		SessionID:       sessionID,
+		MessageID:       messageID,
+		FeedbackType:    input.FeedbackType,
+		ReasonCode:      input.ReasonCode,
+		ReasonText:      input.ReasonText,
+	}, s.config)
+	if err != nil {
+		return nil, err
+	}
+	return feedbackState(feedback), nil
+}
+
+func (s *feedbackService) GetMessageFeedback(
+	ctx context.Context,
+	sessionID string,
+	messageID string,
+) (*types.MessageFeedbackState, error) {
+	sessionTenantID, userID, _, err := s.authorizeMessage(ctx, sessionID, messageID)
+	if err != nil {
+		return nil, err
+	}
+	feedback, err := s.repo.GetMessageFeedback(ctx, sessionTenantID, userID, messageID)
+	if err != nil {
+		return nil, err
+	}
+	return feedbackState(feedback), nil
+}
+
+func (s *feedbackService) authorizeMessage(
+	ctx context.Context,
+	sessionID string,
+	messageID string,
+) (uint64, string, *types.Message, error) {
+	sessionTenantID, ok := types.SessionTenantIDFromContext(ctx)
+	if !ok || sessionTenantID == 0 {
+		return 0, "", nil, types.ErrFeedbackUnauthorized
+	}
+	userID := types.SessionOwnerIDFromContext(ctx)
+	if userID == "" {
+		return 0, "", nil, types.ErrFeedbackUnauthorized
+	}
+	if _, err := s.sessionRepo.Get(ctx, sessionTenantID, userID, sessionID); err != nil {
+		if errors.Is(err, apperrors.ErrSessionNotFound) {
+			return 0, "", nil, fmt.Errorf("%w: session", types.ErrFeedbackMessageNotFound)
+		}
+		return 0, "", nil, fmt.Errorf("authorize feedback session: %w", err)
+	}
+	message, err := s.messageRepo.GetMessage(ctx, sessionID, messageID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return 0, "", nil, fmt.Errorf("%w: message", types.ErrFeedbackMessageNotFound)
+		}
+		return 0, "", nil, fmt.Errorf("authorize feedback message: %w", err)
+	}
+	if message.Role != "assistant" || !message.IsCompleted {
+		return 0, "", nil, types.ErrFeedbackMessageIncomplete
+	}
+	return sessionTenantID, userID, message, nil
+}
+
+func feedbackState(feedback *types.MessageFeedback) *types.MessageFeedbackState {
+	if feedback == nil {
+		return nil
+	}
+	return &types.MessageFeedbackState{
+		FeedbackType: feedback.FeedbackType,
+		ReasonCode:   feedback.ReasonCode,
+		ReasonText:   feedback.ReasonText,
+		FeedbackAt:   feedback.FeedbackAt,
+	}
+}
