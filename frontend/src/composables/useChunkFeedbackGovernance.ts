@@ -49,6 +49,7 @@ export function canGovernChunkFeedback(input: {
 export function useChunkFeedbackGovernance(options: {
   kbId: MaybeRefOrGetter<string>
   api?: GovernanceAPI
+  autoLoad?: boolean
 }) {
   const api: GovernanceAPI = options.api || {
     list: async (...args) => (await import('../api/feedback')).listChunkFeedback(...args),
@@ -113,11 +114,6 @@ export function useChunkFeedbackGovernance(options: {
     resetting.value = false
     resetRefreshFailed.value = false
   }
-
-  watch(kbId, () => {
-    invalidateRequests()
-    clearKBState()
-  }, { flush: 'sync' })
 
   if (getCurrentScope()) {
     onScopeDispose(() => {
@@ -278,6 +274,12 @@ export function useChunkFeedbackGovernance(options: {
     detailError.value = null
     resetRefreshFailed.value = false
   }
+
+  watch(kbId, () => {
+    invalidateRequests()
+    clearKBState()
+    if (options.autoLoad && kbId.value) void loadList()
+  }, { flush: 'sync', immediate: Boolean(options.autoLoad) })
 
   return {
     filters,

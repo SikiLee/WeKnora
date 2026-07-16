@@ -124,3 +124,45 @@ test('failed and concurrent requests never overwrite the prior state', async () 
   assert.equal(failing.isLiked.value, true)
   assert.match(String(failing.error.value), /network unavailable/)
 })
+
+test('a response for an old message cannot overwrite or emit for the new message', async () => {
+  let releaseOld: ((value: { data: MessageFeedbackState | null }) => void) | undefined
+  const sessionId = ref('session-1')
+  const messageId = ref('message-1')
+  const initialFeedback = ref<MessageFeedbackState | null>(state('like'))
+  const updates: Array<MessageFeedbackState | null> = []
+  const submitted: string[] = []
+  const model = useAnswerFeedback({
+    sessionId,
+    messageId,
+    completed: true,
+    initialFeedback,
+    submit: async (_sessionId, targetMessageId) => {
+      submitted.push(targetMessageId)
+      if (targetMessageId === 'message-1') {
+        return new Promise((resolve) => {
+          releaseOld = resolve
+        })
+      }
+      return { data: state('dislike', 'incorrect') }
+    },
+    onUpdated: (value) => updates.push(value),
+  })
+
+  const oldRequest = model.toggleLike()
+  assert.equal(model.pending.value, true)
+
+  messageId.value = 'message-2'
+  initialFeedback.value = state('dislike', 'incorrect')
+  assert.equal(model.pending.value, false)
+  assert.equal(model.isDisliked.value, true)
+
+  assert.equal(await model.toggleLike(), true)
+  assert.deepEqual(submitted, ['message-1', 'message-2'])
+  assert.equal(model.isDisliked.value, true)
+
+  releaseOld?.({ data: null })
+  assert.equal(await oldRequest, true)
+  assert.equal(model.isDisliked.value, true)
+  assert.deepEqual(updates, [state('dislike', 'incorrect')])
+})

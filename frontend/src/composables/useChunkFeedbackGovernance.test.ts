@@ -332,6 +332,39 @@ test('switching knowledge bases clears state and rejects an older list response'
   assert.equal(model.total.value, 1)
 })
 
+test('auto-loading a new knowledge base ignores the older knowledge base response', async () => {
+  const kbId = ref('kb-a')
+  const listA = deferred<{
+    data: { total: number; page: number; page_size: number; data: ChunkFeedbackListItem[] }
+  }>()
+  const itemB = { ...listItem, chunk_id: 'chunk-b', knowledge_title: 'KB B' }
+  const calls: string[] = []
+  const model = useChunkFeedbackGovernance({
+    kbId,
+    autoLoad: true,
+    api: {
+      list: async (targetKBID) => {
+        calls.push(targetKBID)
+        if (targetKBID === 'kb-a') return listA.promise
+        return { data: { total: 1, page: 1, page_size: 20, data: [itemB] } }
+      },
+      detail: async () => ({ data: detail }),
+      logs: async () => ({ data: { total: 0, page: 1, page_size: 20, data: [] } }),
+      reset: async () => ({ data: detail }),
+    },
+  })
+
+  kbId.value = 'kb-b'
+  await Promise.resolve()
+  assert.deepEqual(calls, ['kb-a', 'kb-b'])
+  assert.deepEqual(model.items.value, [itemB])
+
+  listA.resolve({ data: { total: 1, page: 1, page_size: 20, data: [listItem] } })
+  await Promise.resolve()
+  assert.deepEqual(model.items.value, [itemB])
+  assert.equal(model.total.value, 1)
+})
+
 test('detail and log responses from an old knowledge base cannot reopen the drawer', async () => {
   const kbId = ref('kb-a')
   const logsA = deferred<{

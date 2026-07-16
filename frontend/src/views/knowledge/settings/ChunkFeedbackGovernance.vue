@@ -152,7 +152,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, toRef, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, toRef, watch } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { useI18n } from 'vue-i18n'
 import { useChunkFeedbackGovernance } from '@/composables/useChunkFeedbackGovernance'
@@ -167,7 +167,7 @@ const {
   detailVisible, detailLoading, selected, detailError, logs,
   logPage, logPageSize, logTotal, logsLoading, resetting,
   resetRefreshFailed, loadList, loadLogs, openDetail, resetSelected, closeDetail,
-} = useChunkFeedbackGovernance({ kbId: toRef(props, 'kbId') })
+} = useChunkFeedbackGovernance({ kbId: toRef(props, 'kbId'), autoLoad: true })
 
 const statusOptions = computed(() => ['all', 'rated', 'high', 'normal', 'low', 'unrated'].map((value) => ({
   value,
@@ -253,8 +253,11 @@ const handleDetailClose = () => {
   closeDetail()
 }
 
-onMounted(() => loadList())
-watch(() => props.kbId, clearResetDraft, { flush: 'sync' })
+watch(
+  () => props.kbId,
+  clearResetDraft,
+  { flush: 'sync', immediate: true },
+)
 onBeforeUnmount(clearResetDraft)
 </script>
 

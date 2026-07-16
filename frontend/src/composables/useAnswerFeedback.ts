@@ -24,13 +24,32 @@ export function useAnswerFeedback(options: UseAnswerFeedbackOptions) {
   const feedback = ref<MessageFeedbackState | null>(toValue(options.initialFeedback) || null)
   const pending = ref(false)
   const error = ref<unknown>(null)
+  let requestID = 0
+
+  const currentIdentity = () => ({
+    sessionId: toValue(options.sessionId).trim(),
+    messageId: toValue(options.messageId).trim(),
+  })
+
+  watch(
+    () => {
+      const identity = currentIdentity()
+      return `${identity.sessionId}\u0000${identity.messageId}`
+    },
+    () => {
+      ++requestID
+      pending.value = false
+      error.value = null
+    },
+    { flush: 'sync' },
+  )
 
   watch(
     () => toValue(options.initialFeedback),
     (value) => {
       feedback.value = value || null
     },
-    { deep: true },
+    { deep: true, flush: 'sync' },
   )
 
   const canRate = computed(() => Boolean(
@@ -43,6 +62,8 @@ export function useAnswerFeedback(options: UseAnswerFeedbackOptions) {
 
   const apply = async (input: MessageFeedbackInput): Promise<boolean> => {
     if (!canRate.value || pending.value) return false
+    const target = currentIdentity()
+    const activeRequestID = ++requestID
     pending.value = true
     error.value = null
     try {
@@ -51,18 +72,25 @@ export function useAnswerFeedback(options: UseAnswerFeedbackOptions) {
         return setMessageFeedback(sessionId, messageId, payload)
       })
       const response = await submit(
-        toValue(options.sessionId).trim(),
-        toValue(options.messageId).trim(),
+        target.sessionId,
+        target.messageId,
         input,
       )
+      const current = currentIdentity()
+      if (
+        activeRequestID !== requestID
+        || current.sessionId !== target.sessionId
+        || current.messageId !== target.messageId
+      ) return true
       feedback.value = response.data || null
       options.onUpdated?.(feedback.value)
       return true
     } catch (cause) {
+      if (activeRequestID !== requestID) return true
       error.value = cause
       return false
     } finally {
-      pending.value = false
+      if (activeRequestID === requestID) pending.value = false
     }
   }
 
