@@ -1,0 +1,15 @@
+DROP TABLE IF EXISTS evaluation_chunk_recommendations;
+DROP TABLE IF EXISTS evaluation_chunk_experiment_variants;
+DROP TABLE IF EXISTS evaluation_chunk_experiments;
+DROP TABLE IF EXISTS evaluation_failure_diagnoses;
+DROP TABLE IF EXISTS evaluation_judge_calibrations;
+DROP TABLE IF EXISTS evaluation_schedule_slots;
+DROP TABLE IF EXISTS evaluation_schedules;
+DROP TABLE IF EXISTS evaluation_metric_results;
+DROP TABLE IF EXISTS evaluation_run_items;
+DROP TABLE IF EXISTS evaluation_runs;
+DROP TABLE IF EXISTS evaluation_testset_generations;
+DROP TABLE IF EXISTS evaluation_gold_evidences;
+DROP TABLE IF EXISTS evaluation_cases;
+DROP TABLE IF EXISTS evaluation_testset_versions;
+DROP TABLE IF EXISTS evaluation_testsets;

@@ -69,6 +69,7 @@ var queueDefinitions = []QueueDefinition{
 	{Name: QueueMaintenance, Pool: WorkerPoolMaintenance, Weight: 1, TaskTypes: []string{
 		TypeFAQImport, TypeKBClone, TypeIndexDelete, TypeKBDelete,
 		TypeKnowledgeListDelete, TypeKnowledgeListReparse, TypeKnowledgeMove,
+		TypeRAGEvaluationGenerateTestset, TypeRAGEvaluationRun, TypeRAGEvaluationExperiment, TypeRAGEvaluationCleanup,
 	}},
 	{Name: QueueWiki, Pool: WorkerPoolWiki, Weight: 1, TaskTypes: []string{TypeWikiIngest, TypeWikiFinalize}},
 }
