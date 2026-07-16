@@ -3,6 +3,7 @@ package event
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -201,13 +202,13 @@ func TestEventBus_EmitAndWait(t *testing.T) {
 	ctx := context.Background()
 	bus := NewAsyncEventBus()
 
-	counter := 0
+	var counter atomic.Int32
 
 	// Register handlers
 	for i := 0; i < 3; i++ {
 		bus.On(EventQueryReceived, func(ctx context.Context, event Event) error {
 			time.Sleep(50 * time.Millisecond)
-			counter++
+			counter.Add(1)
 			return nil
 		})
 	}
@@ -222,8 +223,8 @@ func TestEventBus_EmitAndWait(t *testing.T) {
 		t.Errorf("EmitAndWait failed: %v", err)
 	}
 
-	if counter != 3 {
-		t.Errorf("Expected 3 handlers to complete, got %d", counter)
+	if got := counter.Load(); got != 3 {
+		t.Errorf("Expected 3 handlers to complete, got %d", got)
 	}
 }
 

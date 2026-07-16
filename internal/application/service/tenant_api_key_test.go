@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 )
 
 type fakeTenantAPIKeyRepo struct {
+	mu                  sync.Mutex
 	byHash              map[string]*types.TenantAPIKey
 	nextID              uint64
 	lastUsedUpdateCount int
@@ -43,6 +45,9 @@ func newFakeTenantAPIKeyRepo() *fakeTenantAPIKeyRepo {
 }
 
 func (r *fakeTenantAPIKeyRepo) CreateAPIKey(_ context.Context, key *types.TenantAPIKey) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	if _, ok := r.byHash[key.KeyHash]; ok {
 		return errors.New("duplicate key hash")
 	}
@@ -55,6 +60,9 @@ func (r *fakeTenantAPIKeyRepo) CreateAPIKey(_ context.Context, key *types.Tenant
 }
 
 func (r *fakeTenantAPIKeyRepo) GetAPIKeyByHash(_ context.Context, hash string) (*types.TenantAPIKey, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	key, ok := r.byHash[hash]
 	if !ok {
 		return nil, apprepo.ErrTenantAPIKeyNotFound
@@ -64,6 +72,9 @@ func (r *fakeTenantAPIKeyRepo) GetAPIKeyByHash(_ context.Context, hash string) (
 }
 
 func (r *fakeTenantAPIKeyRepo) ListAPIKeys(_ context.Context, tenantID uint64) ([]*types.TenantAPIKey, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	out := []*types.TenantAPIKey{}
 	for _, key := range r.byHash {
 		if key.TenantIDValue() == tenantID && key.RevokedAt == nil {
@@ -86,6 +97,9 @@ func (r *fakeTenantAPIKeyRepo) ListPlatformAPIKeys(_ context.Context) ([]*types.
 }
 
 func (r *fakeTenantAPIKeyRepo) RevokeAPIKey(_ context.Context, tenantID uint64, id uint64) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	now := time.Now()
 	for _, key := range r.byHash {
 		if key.ID == id && key.TenantIDValue() == tenantID && key.RevokedAt == nil {
@@ -108,6 +122,9 @@ func (r *fakeTenantAPIKeyRepo) RevokePlatformAPIKey(_ context.Context, id uint64
 }
 
 func (r *fakeTenantAPIKeyRepo) UpdateAPIKeyHash(_ context.Context, id uint64, hash string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	for oldHash, key := range r.byHash {
 		if key.ID == id && key.RevokedAt == nil {
 			delete(r.byHash, oldHash)
@@ -120,6 +137,9 @@ func (r *fakeTenantAPIKeyRepo) UpdateAPIKeyHash(_ context.Context, id uint64, ha
 }
 
 func (r *fakeTenantAPIKeyRepo) HasKeysWithPlaceholderHash(_ context.Context) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	for _, key := range r.byHash {
 		if key.RevokedAt == nil && strings.HasPrefix(key.KeyHash, "migrated-tenant-") {
 			return true, nil
@@ -129,6 +149,9 @@ func (r *fakeTenantAPIKeyRepo) HasKeysWithPlaceholderHash(_ context.Context) (bo
 }
 
 func (r *fakeTenantAPIKeyRepo) ListKeysWithPlaceholderHash(_ context.Context) ([]*types.TenantAPIKey, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	out := []*types.TenantAPIKey{}
 	for _, key := range r.byHash {
 		if key.RevokedAt == nil && strings.HasPrefix(key.KeyHash, "migrated-tenant-") {
@@ -140,6 +163,9 @@ func (r *fakeTenantAPIKeyRepo) ListKeysWithPlaceholderHash(_ context.Context) ([
 }
 
 func (r *fakeTenantAPIKeyRepo) UpdateAPIKeyLastUsed(_ context.Context, id uint64, at time.Time) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	r.lastUsedUpdateCount++
 	for _, key := range r.byHash {
 		if key.ID == id && key.RevokedAt == nil {
@@ -147,6 +173,12 @@ func (r *fakeTenantAPIKeyRepo) UpdateAPIKeyLastUsed(_ context.Context, id uint64
 		}
 	}
 	return nil
+}
+
+func (r *fakeTenantAPIKeyRepo) lastUsedUpdates() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.lastUsedUpdateCount
 }
 
 func TestTenantAPIKeyServiceBackfillMissingKeyHashes(t *testing.T) {
@@ -253,11 +285,11 @@ func TestTenantAPIKeyServiceAuthenticateThrottlesLastUsedUpdates(t *testing.T) {
 	}
 
 	deadline := time.Now().Add(500 * time.Millisecond)
-	for repo.lastUsedUpdateCount == 0 && time.Now().Before(deadline) {
+	for repo.lastUsedUpdates() == 0 && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
 	}
-	if repo.lastUsedUpdateCount != 1 {
-		t.Fatalf("last_used update count = %d, want 1 (throttled async write)", repo.lastUsedUpdateCount)
+	if got := repo.lastUsedUpdates(); got != 1 {
+		t.Fatalf("last_used update count = %d, want 1 (throttled async write)", got)
 	}
 }
 
