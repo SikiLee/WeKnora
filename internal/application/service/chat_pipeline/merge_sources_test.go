@@ -104,11 +104,29 @@ func TestExpandShortContextWithNeighborsTracksActualSources(t *testing.T) {
 
 	t.Run("multi-level expansion", func(t *testing.T) {
 		chunks := []*types.Chunk{
-			{ID: "prev-2", TenantID: 1, KnowledgeBaseID: "kb", KnowledgeID: "doc", Content: strings.Repeat("a", 50), ChunkType: types.ChunkTypeText, NextChunkID: "prev-1"},
-			{ID: "prev-1", TenantID: 1, KnowledgeBaseID: "kb", KnowledgeID: "doc", Content: strings.Repeat("b", 50), ChunkType: types.ChunkTypeText, PreChunkID: "prev-2", NextChunkID: "base"},
-			{ID: "base", TenantID: 1, KnowledgeBaseID: "kb", KnowledgeID: "doc", Content: strings.Repeat("c", 50), ChunkType: types.ChunkTypeText, PreChunkID: "prev-1", NextChunkID: "next-1"},
-			{ID: "next-1", TenantID: 1, KnowledgeBaseID: "kb", KnowledgeID: "doc", Content: strings.Repeat("d", 50), ChunkType: types.ChunkTypeText, PreChunkID: "base", NextChunkID: "next-2"},
-			{ID: "next-2", TenantID: 1, KnowledgeBaseID: "kb", KnowledgeID: "doc", Content: strings.Repeat("e", 50), ChunkType: types.ChunkTypeText, PreChunkID: "next-1"},
+			{
+				ID: "prev-2", TenantID: 1, KnowledgeBaseID: "kb", KnowledgeID: "doc",
+				Content: strings.Repeat("a", 50), ChunkType: types.ChunkTypeText, NextChunkID: "prev-1",
+			},
+			{
+				ID: "prev-1", TenantID: 1, KnowledgeBaseID: "kb", KnowledgeID: "doc",
+				Content: strings.Repeat("b", 50), ChunkType: types.ChunkTypeText,
+				PreChunkID: "prev-2", NextChunkID: "base",
+			},
+			{
+				ID: "base", TenantID: 1, KnowledgeBaseID: "kb", KnowledgeID: "doc",
+				Content: strings.Repeat("c", 50), ChunkType: types.ChunkTypeText,
+				PreChunkID: "prev-1", NextChunkID: "next-1",
+			},
+			{
+				ID: "next-1", TenantID: 1, KnowledgeBaseID: "kb", KnowledgeID: "doc",
+				Content: strings.Repeat("d", 50), ChunkType: types.ChunkTypeText,
+				PreChunkID: "base", NextChunkID: "next-2",
+			},
+			{
+				ID: "next-2", TenantID: 1, KnowledgeBaseID: "kb", KnowledgeID: "doc",
+				Content: strings.Repeat("e", 50), ChunkType: types.ChunkTypeText, PreChunkID: "next-1",
+			},
 		}
 		if err := db.Create(chunks).Error; err != nil {
 			t.Fatalf("create chunks: %v", err)
@@ -134,9 +152,19 @@ func TestExpandShortContextWithNeighborsTracksActualSources(t *testing.T) {
 			t.Fatalf("clear truncate chunks: %v", err)
 		}
 		chunks := []*types.Chunk{
-			{ID: "truncate-prev", TenantID: 1, KnowledgeBaseID: "kb", KnowledgeID: "truncate-doc", Content: strings.Repeat("p", 750), ChunkType: types.ChunkTypeText, NextChunkID: "truncate-base"},
-			{ID: "truncate-base", TenantID: 1, KnowledgeBaseID: "kb", KnowledgeID: "truncate-doc", Content: strings.Repeat("b", 100), ChunkType: types.ChunkTypeText, PreChunkID: "truncate-prev", NextChunkID: "truncate-next"},
-			{ID: "truncate-next", TenantID: 1, KnowledgeBaseID: "kb", KnowledgeID: "truncate-doc", Content: strings.Repeat("n", 100), ChunkType: types.ChunkTypeText, PreChunkID: "truncate-base"},
+			{
+				ID: "truncate-prev", TenantID: 1, KnowledgeBaseID: "kb", KnowledgeID: "truncate-doc",
+				Content: strings.Repeat("p", 750), ChunkType: types.ChunkTypeText, NextChunkID: "truncate-base",
+			},
+			{
+				ID: "truncate-base", TenantID: 1, KnowledgeBaseID: "kb", KnowledgeID: "truncate-doc",
+				Content: strings.Repeat("b", 100), ChunkType: types.ChunkTypeText,
+				PreChunkID: "truncate-prev", NextChunkID: "truncate-next",
+			},
+			{
+				ID: "truncate-next", TenantID: 1, KnowledgeBaseID: "kb", KnowledgeID: "truncate-doc",
+				Content: strings.Repeat("n", 100), ChunkType: types.ChunkTypeText, PreChunkID: "truncate-base",
+			},
 		}
 		if err := db.Create(chunks).Error; err != nil {
 			t.Fatalf("create truncate chunks: %v", err)
