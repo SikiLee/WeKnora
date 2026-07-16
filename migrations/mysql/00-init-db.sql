@@ -225,8 +225,8 @@ CREATE TABLE message_feedbacks (
     reason_code VARCHAR(64) NOT NULL DEFAULT '',
     reason_text TEXT NOT NULL DEFAULT (''),
     feedback_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    updated_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
     CONSTRAINT chk_message_feedbacks_type CHECK (feedback_type IN ('like', 'dislike')),
     CONSTRAINT chk_message_feedbacks_reason_text_length CHECK (CHAR_LENGTH(reason_text) <= 500),
     UNIQUE KEY idx_message_feedbacks_user_message (session_tenant_id, user_id, message_id),
@@ -246,7 +246,7 @@ CREATE TABLE message_chunk_references (
     reference_rank INTEGER NOT NULL DEFAULT 0,
     retrieval_score DOUBLE NOT NULL DEFAULT 0,
     match_type VARCHAR(64) NOT NULL DEFAULT '',
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     UNIQUE KEY idx_message_chunk_refs_message_chunk (session_tenant_id, message_id, chunk_tenant_id, chunk_id),
     KEY idx_message_chunk_refs_chunk (chunk_tenant_id, chunk_id, created_at),
     KEY idx_message_chunk_refs_kb (chunk_tenant_id, knowledge_base_id, created_at),
@@ -264,7 +264,7 @@ CREATE TABLE chunk_feedback_weight_logs (
     source_message_id VARCHAR(36) NOT NULL DEFAULT '',
     source_feedback_id VARCHAR(36) NOT NULL DEFAULT '',
     reason TEXT NOT NULL DEFAULT (''),
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     KEY idx_chunk_feedback_weight_logs_chunk (chunk_tenant_id, chunk_id, created_at),
     KEY idx_chunk_feedback_weight_logs_created_at (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

@@ -1,12 +1,60 @@
-ALTER TABLE chunks ADD COLUMN IF NOT EXISTS like_count BIGINT NOT NULL DEFAULT 0;
-ALTER TABLE chunks ADD COLUMN IF NOT EXISTS dislike_count BIGINT NOT NULL DEFAULT 0;
-ALTER TABLE chunks ADD COLUMN IF NOT EXISTS positive_rate DOUBLE PRECISION;
-ALTER TABLE chunks ADD COLUMN IF NOT EXISTS recall_weight DOUBLE PRECISION NOT NULL DEFAULT 1.0;
-ALTER TABLE chunks ADD COLUMN IF NOT EXISTS needs_optimization BOOLEAN NOT NULL DEFAULT false;
-ALTER TABLE chunks ADD COLUMN IF NOT EXISTS feedback_reset_at TIMESTAMP WITH TIME ZONE;
-ALTER TABLE chunks ADD COLUMN IF NOT EXISTS feedback_updated_at TIMESTAMP WITH TIME ZONE;
+DO $$
+DECLARE
+    existing_object TEXT;
+BEGIN
+    SELECT object_name
+    INTO existing_object
+    FROM (
+        SELECT column_name AS object_name
+        FROM information_schema.columns
+        WHERE table_schema = current_schema()
+          AND table_name = 'chunks'
+          AND column_name IN (
+              'like_count',
+              'dislike_count',
+              'positive_rate',
+              'recall_weight',
+              'needs_optimization',
+              'feedback_reset_at',
+              'feedback_updated_at'
+          )
+        UNION ALL
+        SELECT target.object_name
+        FROM (
+            VALUES
+                ('message_feedbacks'),
+                ('idx_message_feedbacks_user_message'),
+                ('idx_message_feedbacks_session'),
+                ('idx_message_feedbacks_feedback_at'),
+                ('message_chunk_references'),
+                ('idx_message_chunk_refs_message_chunk'),
+                ('idx_message_chunk_refs_chunk'),
+                ('idx_message_chunk_refs_kb'),
+                ('idx_message_chunk_refs_session'),
+                ('chunk_feedback_weight_logs'),
+                ('idx_chunk_feedback_weight_logs_chunk'),
+                ('idx_chunk_feedback_weight_logs_created_at')
+        ) AS target(object_name)
+        WHERE to_regclass(format('%I.%I', current_schema(), target.object_name)) IS NOT NULL
+    ) AS collisions
+    LIMIT 1;
 
-CREATE TABLE IF NOT EXISTS message_feedbacks (
+    IF existing_object IS NOT NULL THEN
+        RAISE EXCEPTION 'answer feedback migration object already exists: %', existing_object
+            USING ERRCODE = 'duplicate_object';
+    END IF;
+END
+$$;
+
+ALTER TABLE chunks ADD COLUMN like_count BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE chunks ADD COLUMN dislike_count BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE chunks ADD COLUMN positive_rate DOUBLE PRECISION;
+ALTER TABLE chunks ADD COLUMN recall_weight DOUBLE PRECISION NOT NULL DEFAULT 1.0;
+ALTER TABLE chunks ADD COLUMN needs_optimization BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE chunks ADD COLUMN feedback_reset_at TIMESTAMP WITH TIME ZONE;
+ALTER TABLE chunks ADD COLUMN feedback_updated_at TIMESTAMP WITH TIME ZONE;
+
+CREATE TABLE message_feedbacks (
     id VARCHAR(36) PRIMARY KEY,
     session_tenant_id BIGINT NOT NULL,
     user_id VARCHAR(512) NOT NULL,
@@ -22,14 +70,14 @@ CREATE TABLE IF NOT EXISTS message_feedbacks (
     CONSTRAINT chk_message_feedbacks_reason_text_length CHECK (char_length(reason_text) <= 500)
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_message_feedbacks_user_message
+CREATE UNIQUE INDEX idx_message_feedbacks_user_message
     ON message_feedbacks(session_tenant_id, user_id, message_id);
-CREATE INDEX IF NOT EXISTS idx_message_feedbacks_session
+CREATE INDEX idx_message_feedbacks_session
     ON message_feedbacks(session_tenant_id, session_id, message_id);
-CREATE INDEX IF NOT EXISTS idx_message_feedbacks_feedback_at
+CREATE INDEX idx_message_feedbacks_feedback_at
     ON message_feedbacks(feedback_at);
 
-CREATE TABLE IF NOT EXISTS message_chunk_references (
+CREATE TABLE message_chunk_references (
     id VARCHAR(36) PRIMARY KEY,
     session_tenant_id BIGINT NOT NULL,
     chunk_tenant_id BIGINT NOT NULL,
@@ -44,16 +92,16 @@ CREATE TABLE IF NOT EXISTS message_chunk_references (
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_message_chunk_refs_message_chunk
+CREATE UNIQUE INDEX idx_message_chunk_refs_message_chunk
     ON message_chunk_references(session_tenant_id, message_id, chunk_tenant_id, chunk_id);
-CREATE INDEX IF NOT EXISTS idx_message_chunk_refs_chunk
+CREATE INDEX idx_message_chunk_refs_chunk
     ON message_chunk_references(chunk_tenant_id, chunk_id, created_at);
-CREATE INDEX IF NOT EXISTS idx_message_chunk_refs_kb
+CREATE INDEX idx_message_chunk_refs_kb
     ON message_chunk_references(chunk_tenant_id, knowledge_base_id, created_at);
-CREATE INDEX IF NOT EXISTS idx_message_chunk_refs_session
+CREATE INDEX idx_message_chunk_refs_session
     ON message_chunk_references(session_tenant_id, session_id, message_id);
 
-CREATE TABLE IF NOT EXISTS chunk_feedback_weight_logs (
+CREATE TABLE chunk_feedback_weight_logs (
     id VARCHAR(36) PRIMARY KEY,
     chunk_tenant_id BIGINT NOT NULL,
     chunk_id VARCHAR(36) NOT NULL,
@@ -67,7 +115,7 @@ CREATE TABLE IF NOT EXISTS chunk_feedback_weight_logs (
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX IF NOT EXISTS idx_chunk_feedback_weight_logs_chunk
+CREATE INDEX idx_chunk_feedback_weight_logs_chunk
     ON chunk_feedback_weight_logs(chunk_tenant_id, chunk_id, created_at);
-CREATE INDEX IF NOT EXISTS idx_chunk_feedback_weight_logs_created_at
+CREATE INDEX idx_chunk_feedback_weight_logs_created_at
     ON chunk_feedback_weight_logs(created_at);
