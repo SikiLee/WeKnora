@@ -175,3 +175,32 @@ func TestChunkFeedbackHandlerRejectsOversizedResetBeforeServiceCall(t *testing.T
 		t.Fatalf("status=%d called=%v body=%s", w.Code, called, w.Body.String())
 	}
 }
+
+func TestChunkFeedbackHandlerRejectsUnknownFieldsAndMultipleResetObjects(t *testing.T) {
+	called := false
+	service := &chunkFeedbackServiceStub{
+		resetFn: func(
+			context.Context, string, string, *types.ChunkFeedbackResetInput,
+		) (*types.ChunkFeedbackDetail, error) {
+			called = true
+			return nil, nil
+		},
+	}
+	router := chunkFeedbackHandlerRouter(service)
+	for _, body := range []string{
+		`{"reason":"reviewed","unexpected":true}`,
+		`{"reason":"reviewed"} {"reason":"again"}`,
+	} {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(
+			http.MethodPost,
+			"/knowledge-bases/kb-1/chunk-feedback/chunk-1/reset",
+			strings.NewReader(body),
+		)
+		req.Header.Set("Content-Type", "application/json")
+		router.ServeHTTP(w, req)
+		if w.Code != http.StatusBadRequest || called {
+			t.Fatalf("body=%q status=%d called=%v response=%s", body, w.Code, called, w.Body.String())
+		}
+	}
+}

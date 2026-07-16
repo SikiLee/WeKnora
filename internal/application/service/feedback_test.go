@@ -377,6 +377,34 @@ func TestFeedbackServicePersistsSubChunksAndRepairsPartialReferences(t *testing.
 	}
 }
 
+func TestFeedbackServicePersistsSubChunksWhenTopLevelIDIsEmpty(t *testing.T) {
+	f := setupFeedbackServiceTest(t)
+	f.message.KnowledgeReferences = types.References{{
+		ID:              " ",
+		SubChunkID:      []string{"", f.sharedChunk.ID, f.sharedChunk.ID},
+		KnowledgeID:     "forged",
+		KnowledgeBaseID: "forged",
+		Score:           0.61,
+		MatchType:       types.MatchTypeEmbedding,
+	}}
+
+	if err := f.service.PersistMessageChunkReferences(f.ctx, f.message); err != nil {
+		t.Fatalf("persist subchunk-only attribution: %v", err)
+	}
+	refs, err := f.feedbackRepo.ListMessageChunkReferences(f.ctx, f.session.TenantID, f.message.ID)
+	if err != nil {
+		t.Fatalf("list subchunk-only attribution: %v", err)
+	}
+	if len(refs) != 1 || refs[0].ChunkID != f.sharedChunk.ID {
+		t.Fatalf("references = %#v, want the valid subchunk source", refs)
+	}
+	if refs[0].ChunkTenantID != f.sharedChunk.TenantID ||
+		refs[0].KnowledgeBaseID != f.sharedChunk.KnowledgeBaseID ||
+		refs[0].KnowledgeID != f.sharedChunk.KnowledgeID {
+		t.Fatalf("reference did not use database metadata: %#v", refs[0])
+	}
+}
+
 func TestFeedbackServiceCompletionTransactionRollsBackAndRetries(t *testing.T) {
 	f := setupFeedbackServiceTest(t)
 	message := &types.Message{

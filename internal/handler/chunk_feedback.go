@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"encoding/json"
 	stderrors "errors"
 	"io"
 	"net/http"
@@ -121,12 +122,18 @@ func (h *ChunkFeedbackHandler) WeightLogs(c *gin.Context) {
 func (h *ChunkFeedbackHandler) Reset(c *gin.Context) {
 	input := &types.ChunkFeedbackResetInput{}
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 8<<10)
-	if err := c.ShouldBindJSON(input); err != nil && !stderrors.Is(err, io.EOF) {
+	decoder := json.NewDecoder(c.Request.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(input); err != nil && !stderrors.Is(err, io.EOF) {
 		var maxBytesError *http.MaxBytesError
 		if stderrors.As(err, &maxBytesError) {
 			_ = c.Error(apperrors.NewBadRequestError("chunk feedback reset request is too large"))
 			return
 		}
+		_ = c.Error(apperrors.NewBadRequestError("invalid chunk feedback reset request").WithDetails(err.Error()))
+		return
+	}
+	if err := ensureJSONEOF(decoder); err != nil {
 		_ = c.Error(apperrors.NewBadRequestError("invalid chunk feedback reset request").WithDetails(err.Error()))
 		return
 	}

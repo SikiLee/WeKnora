@@ -173,7 +173,7 @@ func (s *feedbackService) buildMessageChunkReferences(
 }
 
 func isFeedbackEligibleReference(ref *types.SearchResult) bool {
-	if ref == nil || strings.TrimSpace(ref.ID) == "" {
+	if ref == nil {
 		return false
 	}
 	if ref.MatchType == types.MatchTypeHistory || ref.MatchType == types.MatchTypeWebSearch {
