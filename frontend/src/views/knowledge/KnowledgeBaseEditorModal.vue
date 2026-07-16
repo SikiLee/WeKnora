@@ -481,6 +481,10 @@ import DataSourceSettings from './settings/DataSourceSettings.vue'
 import KnowledgeBaseActivitySettings from './settings/KnowledgeBaseActivitySettings.vue'
 import ChunkFeedbackGovernance from './settings/ChunkFeedbackGovernance.vue'
 import { canGovernChunkFeedback } from '@/composables/useChunkFeedbackGovernance'
+import {
+  createModalRequestScope,
+  type ModalRequestToken,
+} from '@/composables/modalRequestScope'
 import { useI18n } from 'vue-i18n'
 
 const uiStore = useUIStore()
@@ -502,6 +506,12 @@ const emit = defineEmits<{
   (e: 'update:visible', value: boolean): void
   (e: 'success', kbId: string): void
 }>()
+
+const modalRequestScope = createModalRequestScope(() => ({
+  visible: props.visible,
+  mode: props.mode,
+  kbId: (props.kbId || '').trim(),
+}))
 
 const copyKbId = async () => {
   const id = props.kbId
@@ -541,6 +551,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  modalRequestScope.dispose()
   window.removeEventListener(KB_EDITOR_FOCUS_SECTION_EVENT, onKbEditorFocusSection)
 })
 const saving = ref(false)
@@ -831,27 +842,40 @@ const initFormData = (type: 'document' | 'faq' = 'document') => {
 }
 
 // 加载所有模型
-const loadAllModels = async (force = false) => {
+const loadAllModels = async (
+  force = false,
+  request = modalRequestScope.capture(),
+) => {
   try {
     await chatResources.ensureModels(force)
+    if (!modalRequestScope.isCurrent(request)) return false
     allModels.value = chatResources.allModels || []
+    return true
   } catch (error) {
+    if (!modalRequestScope.isCurrent(request)) return false
     console.error('Failed to load model list:', error)
     MessagePlugin.error(t('knowledgeEditor.messages.loadModelsFailed'))
     allModels.value = []
+    return false
   }
 }
 
 // 加载知识库数据（编辑模式）
-const loadKBData = async () => {
-  if (props.mode !== 'edit' || !props.kbId) return
+const loadKBData = async (request: ModalRequestToken) => {
+  const targetKBID = request.kbId
+  if (
+    request.mode !== 'edit'
+    || !targetKBID
+    || !modalRequestScope.isCurrent(request)
+  ) return false
   
   loading.value = true
   try {
     const [kbInfo, filesResult] = await Promise.all([
-      getKnowledgeBaseById(props.kbId),
-      listKnowledgeFiles(props.kbId, { page: 1, page_size: 1 })
+      getKnowledgeBaseById(targetKBID),
+      listKnowledgeFiles(targetKBID, { page: 1, page_size: 1 })
     ])
+    if (!modalRequestScope.isCurrent(request)) return false
     
     if (!kbInfo || !kbInfo.data) {
       throw new Error(t('knowledgeEditor.messages.notFound'))
@@ -960,12 +984,15 @@ const loadKBData = async () => {
     }
     initialStorageProvider.value = formData.value.storageProvider
     initialIndexingStrategy.value = { ...formData.value.indexingStrategy }
+    return true
   } catch (error) {
+    if (!modalRequestScope.isCurrent(request)) return false
     console.error('Failed to load knowledge base data:', error)
     MessagePlugin.error(t('knowledgeEditor.messages.loadDataFailed'))
     handleClose()
+    return false
   } finally {
-    loading.value = false
+    modalRequestScope.commit(request, () => { loading.value = false })
   }
 }
 
@@ -1097,14 +1124,21 @@ const handleStorageBackendUpdate = (value: string) => {
   }
 }
 
-async function loadTenantDefaultStorageProvider(force = false) {
+async function loadTenantDefaultStorageProvider(
+  force = false,
+  request = modalRequestScope.capture(),
+) {
   try {
     await editorResources.ensureStorageEngine(force)
+    if (!modalRequestScope.isCurrent(request)) return false
     tenantDefaultStorageProvider.value = editorResources.resolveUsableStorageProvider(
       editorResources.storageConfig?.default_provider,
     )
+    return true
   } catch {
+    if (!modalRequestScope.isCurrent(request)) return false
     tenantDefaultStorageProvider.value = editorResources.resolveUsableStorageProvider()
+    return false
   }
 }
 
@@ -1330,6 +1364,8 @@ const handleSubmit = async () => {
   if (!validateForm()) {
     return
   }
+  const request = modalRequestScope.capture()
+  if (!request.visible || !modalRequestScope.isCurrent(request)) return
 
   // 编辑模式下，若已有文件且存储引擎发生了变化，弹窗确认
   if (
@@ -1346,7 +1382,7 @@ const handleSubmit = async () => {
       cancelBtn: t('common.cancel'),
       onConfirm: () => {
         dialog.destroy()
-        doSubmit()
+        if (modalRequestScope.isCurrent(request)) doSubmit(request)
       },
       onCancel: () => {
         dialog.destroy()
@@ -1355,10 +1391,16 @@ const handleSubmit = async () => {
     return
   }
 
-  doSubmit()
+  doSubmit(request)
 }
 
-const doSubmit = async () => {
+const doSubmit = async (request = modalRequestScope.capture()) => {
+  if (!request.visible || !modalRequestScope.isCurrent(request)) return
+  const submittedFormData = formData.value
+  const submittedHasFiles = hasFiles.value
+  const submittedInitialIndexingStrategy = initialIndexingStrategy.value
+    ? { ...initialIndexingStrategy.value }
+    : null
   saving.value = true
   try {
     const data = buildSubmitData()
@@ -1369,6 +1411,7 @@ const doSubmit = async () => {
     if (props.mode === 'create') {
       // 创建模式：一次性创建知识库及所有配置
       const result: any = await createKnowledgeBase(data)
+      if (!modalRequestScope.isCurrent(request)) return
       if (!result.success || !result.data?.id) {
         throw new Error(result.message || t('knowledgeEditor.messages.createFailed'))
       }
@@ -1377,36 +1420,37 @@ const doSubmit = async () => {
       emit('success', result.data.id)
     } else {
       // 编辑模式：分别更新基本信息和配置
-      if (!props.kbId) {
+      const targetKBID = request.kbId
+      if (!targetKBID || !submittedFormData) {
         throw new Error(t('knowledgeEditor.messages.missingId'))
       }
 
       // 1. 更新基本信息（名称、描述）和 FAQ/Wiki 配置
       const updateConfig: any = {}
-      if (formData.value.type === 'faq' && formData.value.faqConfig) {
+      if (submittedFormData.type === 'faq' && submittedFormData.faqConfig) {
         updateConfig.faq_config = {
-          index_mode: formData.value.faqConfig.indexMode || 'question_only',
-          question_index_mode: formData.value.faqConfig.questionIndexMode || 'separate'
+          index_mode: submittedFormData.faqConfig.indexMode || 'question_only',
+          question_index_mode: submittedFormData.faqConfig.questionIndexMode || 'separate'
         }
       }
-      if (formData.value.wikiConfig && formData.value.type !== 'faq') {
+      if (submittedFormData.wikiConfig && submittedFormData.type !== 'faq') {
         updateConfig.wiki_config = {
-          synthesis_model_id: formData.value.modelConfig?.wikiSynthesisModelId || '',
-          max_pages_per_ingest: formData.value.wikiConfig.maxPagesPerIngest || 0,
-          extraction_granularity: formData.value.wikiConfig.extractionGranularity || 'standard',
-          content_instructions: formData.value.wikiConfig.contentInstructions || '',
-          extraction_instructions: formData.value.wikiConfig.extractionInstructions || '',
+          synthesis_model_id: submittedFormData.modelConfig?.wikiSynthesisModelId || '',
+          max_pages_per_ingest: submittedFormData.wikiConfig.maxPagesPerIngest || 0,
+          extraction_granularity: submittedFormData.wikiConfig.extractionGranularity || 'standard',
+          content_instructions: submittedFormData.wikiConfig.contentInstructions || '',
+          extraction_instructions: submittedFormData.wikiConfig.extractionInstructions || '',
         }
       }
-      if (formData.value.type !== 'faq') {
+      if (submittedFormData.type !== 'faq') {
         updateConfig.indexing_strategy = {
-          vector_enabled: formData.value.indexingStrategy?.vectorEnabled ?? true,
-          keyword_enabled: formData.value.indexingStrategy?.keywordEnabled ?? true,
-          wiki_enabled: formData.value.indexingStrategy?.wikiEnabled ?? false,
-          graph_enabled: formData.value.indexingStrategy?.graphEnabled ?? false,
+          vector_enabled: submittedFormData.indexingStrategy?.vectorEnabled ?? true,
+          keyword_enabled: submittedFormData.indexingStrategy?.keywordEnabled ?? true,
+          wiki_enabled: submittedFormData.indexingStrategy?.wikiEnabled ?? false,
+          graph_enabled: submittedFormData.indexingStrategy?.graphEnabled ?? false,
         }
       }
-      await updateKnowledgeBase(props.kbId, {
+      await updateKnowledgeBase(targetKBID, {
         name: data.name,
         description: data.description,
         config: updateConfig
@@ -1429,15 +1473,15 @@ const doSubmit = async () => {
           // Always send strategy / tokenLimit / languages — backend treats
           // empty/0/[] as a valid clear, so we must include them in the
           // payload to let users reset back to defaults.
-          strategy: formData.value?.chunkingConfig.strategy ?? '',
-          tokenLimit: formData.value?.chunkingConfig.tokenLimit ?? 0,
-          languages: formData.value?.chunkingConfig.languages ?? [],
-          tableMetadataInstructions: formData.value?.chunkingConfig.tableMetadataInstructions ?? ''
+          strategy: submittedFormData.chunkingConfig.strategy ?? '',
+          tokenLimit: submittedFormData.chunkingConfig.tokenLimit ?? 0,
+          languages: submittedFormData.chunkingConfig.languages ?? [],
+          tableMetadataInstructions: submittedFormData.chunkingConfig.tableMetadataInstructions ?? ''
         },
         multimodal: {
           enabled: !!data.vlm_config?.enabled
         },
-        storageBackendId: formData.value?.storageBackendId || '',
+        storageBackendId: submittedFormData.storageBackendId || '',
         storageProvider: data.storage_provider_config?.provider || data.storage_config?.provider || 'local',
         nodeExtract: {
           enabled: data.extract_config?.enabled || false,
@@ -1454,13 +1498,14 @@ const doSubmit = async () => {
         }
       }
 
-      await updateKBConfig(props.kbId, config)
+      await updateKBConfig(targetKBID, config)
+      if (!modalRequestScope.isCurrent(request)) return
       MessagePlugin.success(t('knowledgeEditor.messages.updateSuccess'))
 
       // Check if indexing strategy changed and offer rebuild
-      if (hasFiles.value && initialIndexingStrategy.value && formData.value) {
-        const curr = formData.value.indexingStrategy
-        const prev = initialIndexingStrategy.value
+      if (submittedHasFiles && submittedInitialIndexingStrategy) {
+        const curr = submittedFormData.indexingStrategy
+        const prev = submittedInitialIndexingStrategy
         const strategyChanged = (
           curr.vectorEnabled !== prev.vectorEnabled ||
           curr.keywordEnabled !== prev.keywordEnabled ||
@@ -1476,7 +1521,7 @@ const doSubmit = async () => {
             onConfirm: async () => {
               dialog.destroy()
               try {
-                const result: any = await rebuildKBIndex(props.kbId!)
+                const result: any = await rebuildKBIndex(targetKBID)
                 const count = result?.data?.document_count ?? 0
                 MessagePlugin.success(t('knowledgeEditor.indexing.rebuildSuccess', { count }))
               } catch (e) {
@@ -1491,11 +1536,12 @@ const doSubmit = async () => {
         }
       }
 
-      emit('success', props.kbId)
+      emit('success', targetKBID)
     }
     
     handleClose()
   } catch (error: any) {
+    if (!modalRequestScope.isCurrent(request)) return
     console.error('Knowledge base operation failed:', error)
     // Vector-store-binding error codes from the server. Both indicate
     // the selected store cannot be used: 2200 is "the binding itself
@@ -1515,7 +1561,7 @@ const doSubmit = async () => {
       MessagePlugin.error(error?.message || t('common.operationFailed'))
     }
   } finally {
-    saving.value = false
+    modalRequestScope.commit(request, () => { saving.value = false })
   }
 }
 
@@ -1540,43 +1586,47 @@ const resetState = () => {
 // 关闭弹窗
 const handleClose = () => {
   emit('update:visible', false)
-  setTimeout(() => {
-    resetState()
-  }, 300)
 }
 
 // 监听弹窗打开/关闭
-watch(() => props.visible, async (newVal) => {
-  if (newVal) {
-    // 打开弹窗时，先重置状态
-    resetState()
-    
-    // 检查是否有初始 section，如果有则跳转
-    if (uiStore.kbEditorInitialSection) {
-      currentSection.value = uiStore.kbEditorInitialSection
-    }
-    
-    // 加载模型列表与空间默认存储引擎（创建 KB 时即使用，不依赖是否打开「存储引擎」Tab）
-    await Promise.all([loadAllModels(), loadTenantDefaultStorageProvider()])
-    
-    // 根据模式加载数据
-    if (props.mode === 'edit' && props.kbId) {
-      await loadKBData()
-    } else {
-      // 创建模式：初始化空表单，并预填空间默认存储引擎
-      formData.value = initFormData(props.initialType || 'document')
-      formData.value.storageProvider = tenantDefaultStorageProvider.value
-      hasFiles.value = false
-      applyDefaultModelsIfEmpty()
-    }
-  } else {
-    // 关闭弹窗时，延迟重置状态（等待动画结束）
-    setTimeout(() => {
+watch(
+  [
+    () => props.visible,
+    () => props.mode,
+    () => (props.kbId || '').trim(),
+  ],
+  async ([visible]) => {
+    const request = modalRequestScope.invalidate()
+    if (visible) {
       resetState()
-      currentSection.value = 'basic' // 重置为默认 section
-    }, 300)
-  }
-})
+
+      if (uiStore.kbEditorInitialSection) {
+        currentSection.value = uiStore.kbEditorInitialSection
+      }
+
+      await Promise.all([
+        loadAllModels(false, request),
+        loadTenantDefaultStorageProvider(false, request),
+      ])
+      if (!modalRequestScope.isCurrent(request)) return
+
+      if (request.mode === 'edit' && request.kbId) {
+        await loadKBData(request)
+      } else {
+        if (!modalRequestScope.isCurrent(request)) return
+        formData.value = initFormData(props.initialType || 'document')
+        formData.value.storageProvider = tenantDefaultStorageProvider.value
+        hasFiles.value = false
+        applyDefaultModelsIfEmpty()
+      }
+    } else {
+      modalRequestScope.scheduleReset(() => {
+        resetState()
+        currentSection.value = 'basic'
+      })
+    }
+  },
+)
 
 // 监听全局设置弹窗关闭后刷新模型列表
 watch(

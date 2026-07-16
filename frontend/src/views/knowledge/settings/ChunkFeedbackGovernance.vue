@@ -81,7 +81,7 @@
 
     <t-drawer v-model:visible="detailVisible" :header="t('feedback.governance.detailTitle')"
       size="min(680px, 100vw)"
-      :footer="false" @close="closeDetail">
+      :footer="false" @close="handleDetailClose">
       <div v-if="detailLoading" class="drawer-loading"><t-loading /></div>
       <div v-else-if="selected" class="feedback-detail">
         <div class="detail-heading">
@@ -152,7 +152,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, toRef } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, toRef, watch } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { useI18n } from 'vue-i18n'
 import { useChunkFeedbackGovernance } from '@/composables/useChunkFeedbackGovernance'
@@ -226,10 +226,13 @@ const handleLogPageChange = async () => {
   if (!await loadLogs(logPage.value)) MessagePlugin.error(t('feedback.governance.detailFailed'))
 }
 const confirmReset = async () => {
+  const targetKBID = props.kbId
   if (!await resetSelected(resetReason.value)) {
+    if (targetKBID !== props.kbId) return
     MessagePlugin.error(t('feedback.governance.resetFailed'))
     return
   }
+  if (targetKBID !== props.kbId) return
   resetDialogVisible.value = false
   resetReason.value = ''
   if (resetRefreshFailed.value) {
@@ -241,8 +244,18 @@ const confirmReset = async () => {
 const handleResetDialogClose = () => {
   resetReason.value = ''
 }
+const clearResetDraft = () => {
+  resetDialogVisible.value = false
+  resetReason.value = ''
+}
+const handleDetailClose = () => {
+  clearResetDraft()
+  closeDetail()
+}
 
 onMounted(() => loadList())
+watch(() => props.kbId, clearResetDraft, { flush: 'sync' })
+onBeforeUnmount(clearResetDraft)
 </script>
 
 <style scoped lang="less">

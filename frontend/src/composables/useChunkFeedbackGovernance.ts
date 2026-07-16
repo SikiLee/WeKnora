@@ -1,4 +1,13 @@
-import { computed, reactive, ref, toValue, type MaybeRefOrGetter } from 'vue'
+import {
+  computed,
+  getCurrentScope,
+  onScopeDispose,
+  reactive,
+  ref,
+  toValue,
+  watch,
+  type MaybeRefOrGetter,
+} from 'vue'
 import type {
   ChunkFeedbackDetail,
   ChunkFeedbackListItem,
@@ -76,8 +85,46 @@ export function useChunkFeedbackGovernance(options: {
   let listRequestID = 0
   let detailRequestID = 0
   let logRequestID = 0
+  let resetRequestID = 0
 
   const kbId = computed(() => toValue(options.kbId).trim())
+
+  const invalidateRequests = () => {
+    ++listRequestID
+    ++detailRequestID
+    ++logRequestID
+    ++resetRequestID
+  }
+
+  const clearKBState = () => {
+    items.value = []
+    total.value = 0
+    page.value = 1
+    loading.value = false
+    listError.value = null
+    detailVisible.value = false
+    detailLoading.value = false
+    selected.value = null
+    detailError.value = null
+    logs.value = []
+    logPage.value = 1
+    logTotal.value = 0
+    logsLoading.value = false
+    resetting.value = false
+    resetRefreshFailed.value = false
+  }
+
+  watch(kbId, () => {
+    invalidateRequests()
+    clearKBState()
+  }, { flush: 'sync' })
+
+  if (getCurrentScope()) {
+    onScopeDispose(() => {
+      invalidateRequests()
+      clearKBState()
+    })
+  }
 
   const listParams = (): ChunkFeedbackListParams => ({
     page: page.value,
@@ -99,18 +146,18 @@ export function useChunkFeedbackGovernance(options: {
     listError.value = null
     try {
       const response = await api.list(targetKBID, params)
-      if (requestID !== listRequestID) return true
+      if (requestID !== listRequestID || kbId.value !== targetKBID) return true
       items.value = response.data.data || []
       total.value = response.data.total || 0
       page.value = response.data.page || page.value
       pageSize.value = response.data.page_size || pageSize.value
       return true
     } catch (error) {
-      if (requestID !== listRequestID) return true
+      if (requestID !== listRequestID || kbId.value !== targetKBID) return true
       listError.value = error
       return false
     } finally {
-      if (requestID === listRequestID) loading.value = false
+      if (requestID === listRequestID && kbId.value === targetKBID) loading.value = false
     }
   }
 
@@ -123,18 +170,30 @@ export function useChunkFeedbackGovernance(options: {
     logsLoading.value = true
     try {
       const response = await api.logs(targetKBID, targetChunkID, nextPage, logPageSize.value)
-      if (requestID !== logRequestID || selected.value?.chunk_id !== targetChunkID) return true
+      if (
+        requestID !== logRequestID
+        || kbId.value !== targetKBID
+        || selected.value?.chunk_id !== targetChunkID
+      ) return true
       logs.value = response.data.data || []
       logTotal.value = response.data.total || 0
       logPage.value = response.data.page || logPage.value
       logPageSize.value = response.data.page_size || logPageSize.value
       return true
     } catch (error) {
-      if (requestID !== logRequestID || selected.value?.chunk_id !== targetChunkID) return true
+      if (
+        requestID !== logRequestID
+        || kbId.value !== targetKBID
+        || selected.value?.chunk_id !== targetChunkID
+      ) return true
       detailError.value = error
       return false
     } finally {
-      if (requestID === logRequestID) logsLoading.value = false
+      if (
+        requestID === logRequestID
+        && kbId.value === targetKBID
+        && selected.value?.chunk_id === targetChunkID
+      ) logsLoading.value = false
     }
   }
 
@@ -148,53 +207,76 @@ export function useChunkFeedbackGovernance(options: {
     detailError.value = null
     selected.value = null
     logs.value = []
+    logPage.value = 1
     logTotal.value = 0
     try {
       const response = await api.detail(targetKBID, chunkId)
-      if (requestID !== detailRequestID) return true
+      if (requestID !== detailRequestID || kbId.value !== targetKBID) return true
       selected.value = response.data
       return await loadLogs(1)
     } catch (error) {
-      if (requestID !== detailRequestID) return true
+      if (requestID !== detailRequestID || kbId.value !== targetKBID) return true
       detailError.value = error
       return false
     } finally {
-      if (requestID === detailRequestID) detailLoading.value = false
+      if (requestID === detailRequestID && kbId.value === targetKBID) detailLoading.value = false
     }
   }
 
   const resetSelected = async (reason = '') => {
     if (!kbId.value || !selected.value?.chunk_id || resetting.value) return false
+    const requestID = ++resetRequestID
+    const targetKBID = kbId.value
     const targetChunkID = selected.value.chunk_id
     resetting.value = true
     resetRefreshFailed.value = false
     detailError.value = null
     try {
-      const response = await api.reset(kbId.value, targetChunkID, reason.trim())
+      const response = await api.reset(targetKBID, targetChunkID, reason.trim())
+      if (
+        requestID !== resetRequestID
+        || kbId.value !== targetKBID
+        || selected.value?.chunk_id !== targetChunkID
+      ) return true
       if (selected.value?.chunk_id === targetChunkID) selected.value = response.data
       const [listLoaded, logsLoaded] = await Promise.all([
         loadList(false),
         selected.value?.chunk_id === targetChunkID ? loadLogs(1) : Promise.resolve(true),
       ])
+      if (
+        requestID !== resetRequestID
+        || kbId.value !== targetKBID
+        || selected.value?.chunk_id !== targetChunkID
+      ) return true
       resetRefreshFailed.value = !listLoaded || !logsLoaded
       return true
     } catch (error) {
+      if (
+        requestID !== resetRequestID
+        || kbId.value !== targetKBID
+        || selected.value?.chunk_id !== targetChunkID
+      ) return true
       detailError.value = error
       return false
     } finally {
-      resetting.value = false
+      if (requestID === resetRequestID && kbId.value === targetKBID) resetting.value = false
     }
   }
 
   const closeDetail = () => {
     ++detailRequestID
     ++logRequestID
+    ++resetRequestID
     detailVisible.value = false
     detailLoading.value = false
     logsLoading.value = false
+    resetting.value = false
     selected.value = null
     logs.value = []
+    logPage.value = 1
+    logTotal.value = 0
     detailError.value = null
+    resetRefreshFailed.value = false
   }
 
   return {

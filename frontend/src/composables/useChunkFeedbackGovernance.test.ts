@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { ref } from 'vue'
 
 import type {
   ChunkFeedbackDetail,
@@ -282,4 +283,140 @@ test('reset reports a partial refresh failure without losing the successful rese
   assert.equal(model.selected.value?.like_count, 0)
   assert.equal(model.resetRefreshFailed.value, true)
   assert.match(String(model.listError.value), /list refresh unavailable/)
+})
+
+test('switching knowledge bases clears state and rejects an older list response', async () => {
+  const kbId = ref('kb-a')
+  const listA = deferred<{ data: { total: number; page: number; page_size: number; data: ChunkFeedbackListItem[] } }>()
+  const itemB = { ...listItem, chunk_id: 'chunk-b', knowledge_title: 'KB B' }
+  const model = useChunkFeedbackGovernance({
+    kbId,
+    api: {
+      list: async (targetKBID) => targetKBID === 'kb-a'
+        ? listA.promise
+        : { data: { total: 1, page: 1, page_size: 20, data: [itemB] } },
+      detail: async () => ({ data: detail }),
+      logs: async () => ({ data: { total: 0, page: 1, page_size: 20, data: [] } }),
+      reset: async () => ({ data: detail }),
+    },
+  })
+  model.items.value = [listItem]
+  model.total.value = 1
+  model.page.value = 3
+  model.detailVisible.value = true
+  model.selected.value = detail
+  model.logs.value = [log]
+  model.logPage.value = 2
+  model.listError.value = new Error('old list error')
+  model.detailError.value = new Error('old detail error')
+  model.resetRefreshFailed.value = true
+
+  const loadA = model.loadList()
+  kbId.value = 'kb-b'
+
+  assert.deepEqual(model.items.value, [])
+  assert.equal(model.total.value, 0)
+  assert.equal(model.page.value, 1)
+  assert.equal(model.detailVisible.value, false)
+  assert.equal(model.selected.value, null)
+  assert.deepEqual(model.logs.value, [])
+  assert.equal(model.logPage.value, 1)
+  assert.equal(model.listError.value, null)
+  assert.equal(model.detailError.value, null)
+  assert.equal(model.resetRefreshFailed.value, false)
+
+  assert.equal(await model.loadList(), true)
+  listA.resolve({ data: { total: 1, page: 3, page_size: 20, data: [listItem] } })
+  assert.equal(await loadA, true)
+  assert.deepEqual(model.items.value, [itemB])
+  assert.equal(model.total.value, 1)
+})
+
+test('detail and log responses from an old knowledge base cannot reopen the drawer', async () => {
+  const kbId = ref('kb-a')
+  const logsA = deferred<{
+    data: { total: number; page: number; page_size: number; data: ChunkFeedbackWeightLog[] }
+  }>()
+  const logsAStarted = deferred<void>()
+  const detailB = { ...detail, chunk_id: 'chunk-b', knowledge_title: 'KB B' }
+  const logB = { ...log, id: 'log-b', source_action: 'like' }
+  const model = useChunkFeedbackGovernance({
+    kbId,
+    api: {
+      list: async () => ({ data: { total: 0, page: 1, page_size: 20, data: [] } }),
+      detail: async (targetKBID) => ({ data: targetKBID === 'kb-a' ? detail : detailB }),
+      logs: async (targetKBID) => {
+        if (targetKBID === 'kb-a') {
+          logsAStarted.resolve()
+          return logsA.promise
+        }
+        return { data: { total: 1, page: 1, page_size: 20, data: [logB] } }
+      },
+      reset: async () => ({ data: detailB }),
+    },
+  })
+
+  const openA = model.openDetail('chunk-1')
+  await logsAStarted.promise
+  kbId.value = 'kb-b'
+  assert.equal(model.detailVisible.value, false)
+  assert.equal(model.selected.value, null)
+  assert.deepEqual(model.logs.value, [])
+
+  assert.equal(await model.openDetail('chunk-b'), true)
+  logsA.resolve({ data: { total: 1, page: 1, page_size: 20, data: [log] } })
+  assert.equal(await openA, true)
+
+  assert.equal(model.detailVisible.value, true)
+  assert.equal((model.selected.value as ChunkFeedbackDetail | null)?.chunk_id, 'chunk-b')
+  assert.deepEqual(model.logs.value, [logB])
+})
+
+test('a reset response from an old knowledge base cannot mutate or refresh the new one', async () => {
+  const kbId = ref('kb-a')
+  const resetA = deferred<{ data: ChunkFeedbackDetail }>()
+  const detailB = { ...detail, chunk_id: 'chunk-b', knowledge_title: 'KB B' }
+  const resetDetailA = {
+    ...detail,
+    like_count: 0,
+    dislike_count: 0,
+    positive_rate: null,
+    recall_weight: 1,
+  }
+  let listCalls = 0
+  let logCalls = 0
+  const model = useChunkFeedbackGovernance({
+    kbId,
+    api: {
+      list: async () => {
+        listCalls += 1
+        return { data: { total: 0, page: 1, page_size: 20, data: [] } }
+      },
+      detail: async () => ({ data: detailB }),
+      logs: async () => {
+        logCalls += 1
+        return { data: { total: 0, page: 1, page_size: 20, data: [] } }
+      },
+      reset: async (targetKBID) => {
+        assert.equal(targetKBID, 'kb-a')
+        return resetA.promise
+      },
+    },
+  })
+  model.detailVisible.value = true
+  model.selected.value = detail
+
+  const pendingReset = model.resetSelected('reviewed')
+  kbId.value = 'kb-b'
+  model.detailVisible.value = true
+  model.selected.value = detailB
+  resetA.resolve({ data: resetDetailA })
+
+  assert.equal(await pendingReset, true)
+  assert.equal(model.selected.value?.chunk_id, 'chunk-b')
+  assert.equal(model.resetting.value, false)
+  assert.equal(model.detailError.value, null)
+  assert.equal(model.resetRefreshFailed.value, false)
+  assert.equal(listCalls, 0)
+  assert.equal(logCalls, 0)
 })
