@@ -1319,34 +1319,28 @@ func appendQuickAnswerReasoning(msg *types.Message, content string) {
 	msg.AgentSteps[0].ReasoningContent += content
 }
 
-// completeAssistantMessage marks an assistant message as complete, updates it,
-// and asynchronously indexes the Q&A pair into the chat history knowledge base.
+// completeAssistantMessage atomically marks an assistant message complete and
+// persists its chunk attribution, then starts derived background work.
 func (h *Handler) completeAssistantMessage(ctx context.Context, assistantMessage *types.Message, userQuery string) {
 	assistantMessage.UpdatedAt = time.Now()
 	assistantMessage.IsCompleted = true
-	updateErr := h.messageService.UpdateMessage(ctx, assistantMessage)
+	completionCtx := context.WithoutCancel(ctx)
+	var updateErr error
+	if h.feedbackService != nil {
+		updateErr = h.feedbackService.CompleteAssistantMessage(completionCtx, assistantMessage)
+	} else {
+		updateErr = h.messageService.UpdateMessage(completionCtx, assistantMessage)
+	}
 	if updateErr != nil {
 		logger.Warnf(ctx, "persist completed assistant message %s failed: %v", assistantMessage.ID, updateErr)
 	}
 
 	// Asynchronously index the Q&A pair into the chat history knowledge base for vector search.
-	// Use WithoutCancel so the goroutine survives after the HTTP request context is done.
-	bgCtx := context.WithoutCancel(ctx)
-	if updateErr == nil && h.feedbackService != nil {
-		messageCopy := *assistantMessage
-		messageCopy.KnowledgeReferences = make(types.References, len(assistantMessage.KnowledgeReferences))
-		for index, reference := range assistantMessage.KnowledgeReferences {
-			if reference != nil {
-				referenceCopy := *reference
-				messageCopy.KnowledgeReferences[index] = &referenceCopy
-			}
-		}
-		go func() {
-			if err := h.feedbackService.PersistMessageChunkReferences(bgCtx, &messageCopy); err != nil {
-				logger.Warnf(bgCtx, "persist message chunk references failed for message %s: %v", messageCopy.ID, err)
-			}
-		}()
+	// Derived work only starts after the completion transaction commits.
+	if updateErr != nil {
+		return
 	}
+	bgCtx := completionCtx
 	go h.messageService.IndexMessageToKB(bgCtx, userQuery, assistantMessage.Content, assistantMessage.ID, assistantMessage.SessionID)
 	if userQuery != "" && h.suggestionService != nil {
 		go func() {

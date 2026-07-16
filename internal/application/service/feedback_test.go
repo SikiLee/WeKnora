@@ -127,6 +127,10 @@ func setupFeedbackServiceTest(t *testing.T) *feedbackServiceFixture {
 	); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
+	if err := db.Exec(`CREATE UNIQUE INDEX idx_message_chunk_refs_message_chunk
+		ON message_chunk_references(session_tenant_id, message_id, chunk_tenant_id, chunk_id)`).Error; err != nil {
+		t.Fatalf("create message reference uniqueness index: %v", err)
+	}
 
 	session := &types.Session{TenantID: 1, UserID: "user-1", Title: "feedback"}
 	if err := db.Create(session).Error; err != nil {
@@ -370,6 +374,98 @@ func TestFeedbackServicePersistsSubChunksAndRepairsPartialReferences(t *testing.
 	}
 	if logCount != 3 {
 		t.Fatalf("weight log count = %d, want 3", logCount)
+	}
+}
+
+func TestFeedbackServiceCompletionTransactionRollsBackAndRetries(t *testing.T) {
+	f := setupFeedbackServiceTest(t)
+	message := &types.Message{
+		SessionID: f.session.ID,
+		Role:      "assistant",
+		Content:   "incomplete answer",
+		KnowledgeReferences: types.References{{
+			ID: f.sharedChunk.ID, MatchType: types.MatchTypeEmbedding,
+		}},
+	}
+	insertServiceFeedbackMessage(t, f.db, message)
+	message.Content = "completed answer"
+	message.IsCompleted = true
+	message.UpdatedAt = time.Now().UTC()
+
+	triggerSQL := fmt.Sprintf(`
+		CREATE TRIGGER fail_feedback_attribution
+		BEFORE INSERT ON message_chunk_references
+		WHEN NEW.message_id = '%s'
+		BEGIN
+			SELECT RAISE(ABORT, 'simulated attribution failure');
+		END`, message.ID)
+	if err := f.db.Exec(triggerSQL).Error; err != nil {
+		t.Fatalf("create failure trigger: %v", err)
+	}
+	if err := f.service.CompleteAssistantMessage(f.ctx, message); err == nil {
+		t.Fatal("completion unexpectedly succeeded while attribution insert failed")
+	}
+
+	stored, err := f.messageRepo.GetMessage(f.ctx, f.session.ID, message.ID)
+	if err != nil {
+		t.Fatalf("load rolled-back message: %v", err)
+	}
+	if stored.IsCompleted || stored.Content != "incomplete answer" {
+		t.Fatalf("message update escaped rollback: %#v", stored)
+	}
+	refs, err := f.feedbackRepo.ListMessageChunkReferences(f.ctx, f.session.TenantID, message.ID)
+	if err != nil || len(refs) != 0 {
+		t.Fatalf("references after rollback = %#v err=%v", refs, err)
+	}
+
+	if err := f.db.Exec("DROP TRIGGER fail_feedback_attribution").Error; err != nil {
+		t.Fatalf("drop failure trigger: %v", err)
+	}
+	restartedService := service.NewFeedbackService(
+		f.feedbackRepo,
+		f.sessionRepo,
+		f.messageRepo,
+		f.chunkRepo,
+		&config.Config{Feedback: types.DefaultChunkFeedbackConfig()},
+	)
+	for attempt := 0; attempt < 2; attempt++ {
+		if err := restartedService.CompleteAssistantMessage(f.ctx, message); err != nil {
+			t.Fatalf("retry completion attempt %d: %v", attempt+1, err)
+		}
+	}
+	stored, err = f.messageRepo.GetMessage(f.ctx, f.session.ID, message.ID)
+	if err != nil {
+		t.Fatalf("load completed message: %v", err)
+	}
+	if !stored.IsCompleted || stored.Content != "completed answer" {
+		t.Fatalf("completed message = %#v", stored)
+	}
+	refs, err = f.feedbackRepo.ListMessageChunkReferences(f.ctx, f.session.TenantID, message.ID)
+	if err != nil || len(refs) != 1 || refs[0].ChunkID != f.sharedChunk.ID {
+		t.Fatalf("references after retry = %#v err=%v", refs, err)
+	}
+}
+
+func TestFeedbackServiceCompletesMessageWithoutKnowledgeReferences(t *testing.T) {
+	f := setupFeedbackServiceTest(t)
+	message := &types.Message{
+		SessionID: f.session.ID,
+		Role:      "assistant",
+		Content:   "plain answer",
+	}
+	insertServiceFeedbackMessage(t, f.db, message)
+	message.IsCompleted = true
+	message.UpdatedAt = time.Now().UTC()
+
+	if err := f.service.CompleteAssistantMessage(f.ctx, message); err != nil {
+		t.Fatalf("complete message without references: %v", err)
+	}
+	stored, err := f.messageRepo.GetMessage(f.ctx, f.session.ID, message.ID)
+	if err != nil {
+		t.Fatalf("load completed message: %v", err)
+	}
+	if !stored.IsCompleted {
+		t.Fatalf("message remained incomplete: %#v", stored)
 	}
 }
 

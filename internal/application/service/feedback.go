@@ -43,22 +43,54 @@ func NewFeedbackService(
 	}
 }
 
+func (s *feedbackService) CompleteAssistantMessage(ctx context.Context, message *types.Message) error {
+	sessionTenantID, err := feedbackAttributionTenant(ctx, message)
+	if err != nil {
+		return err
+	}
+	refs, err := s.buildMessageChunkReferences(ctx, sessionTenantID, message, nil)
+	if err != nil {
+		return err
+	}
+	return s.repo.CompleteAssistantMessage(ctx, message, refs)
+}
+
 func (s *feedbackService) PersistMessageChunkReferences(ctx context.Context, message *types.Message) error {
-	if message == nil || message.ID == "" || message.SessionID == "" {
-		return fmt.Errorf("persist feedback attribution: message identity is required")
-	}
-	if message.Role != "assistant" || !message.IsCompleted {
-		return types.ErrFeedbackMessageIncomplete
-	}
-	sessionTenantID, ok := types.SessionTenantIDFromContext(ctx)
-	if !ok || sessionTenantID == 0 {
-		return fmt.Errorf("persist feedback attribution: session tenant is required")
+	sessionTenantID, err := feedbackAttributionTenant(ctx, message)
+	if err != nil {
+		return err
 	}
 	existing, err := s.repo.ListMessageChunkReferences(ctx, sessionTenantID, message.ID)
 	if err != nil {
 		return err
 	}
+	refs, err := s.buildMessageChunkReferences(ctx, sessionTenantID, message, existing)
+	if err != nil {
+		return err
+	}
+	return s.repo.CreateMessageChunkReferences(ctx, refs)
+}
 
+func feedbackAttributionTenant(ctx context.Context, message *types.Message) (uint64, error) {
+	if message == nil || message.ID == "" || message.SessionID == "" {
+		return 0, fmt.Errorf("persist feedback attribution: message identity is required")
+	}
+	if message.Role != "assistant" || !message.IsCompleted {
+		return 0, types.ErrFeedbackMessageIncomplete
+	}
+	sessionTenantID, ok := types.SessionTenantIDFromContext(ctx)
+	if !ok || sessionTenantID == 0 {
+		return 0, fmt.Errorf("persist feedback attribution: session tenant is required")
+	}
+	return sessionTenantID, nil
+}
+
+func (s *feedbackService) buildMessageChunkReferences(
+	ctx context.Context,
+	sessionTenantID uint64,
+	message *types.Message,
+	existing []*types.MessageChunkReference,
+) ([]*types.MessageChunkReference, error) {
 	type referenceCandidate struct {
 		chunkID        string
 		rank           int
@@ -94,12 +126,12 @@ func (s *feedbackService) PersistMessageChunkReferences(ctx context.Context, mes
 		}
 	}
 	if len(chunkIDs) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	chunks, err := s.chunkRepo.ListChunksByIDOnly(ctx, chunkIDs)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	chunkByID := make(map[string]*types.Chunk, len(chunks))
 	for _, chunk := range chunks {
@@ -137,7 +169,7 @@ func (s *feedbackService) PersistMessageChunkReferences(ctx context.Context, mes
 			MatchType:       strconv.Itoa(int(candidate.matchType)),
 		})
 	}
-	return s.repo.CreateMessageChunkReferences(ctx, refs)
+	return refs, nil
 }
 
 func isFeedbackEligibleReference(ref *types.SearchResult) bool {

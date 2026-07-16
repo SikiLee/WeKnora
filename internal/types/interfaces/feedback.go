@@ -8,6 +8,9 @@ import (
 
 // FeedbackRepository owns persistence and transactional aggregate updates.
 type FeedbackRepository interface {
+	CompleteAssistantMessage(
+		ctx context.Context, message *types.Message, refs []*types.MessageChunkReference,
+	) error
 	CreateMessageChunkReferences(ctx context.Context, refs []*types.MessageChunkReference) error
 	ListMessageChunkReferences(
 		ctx context.Context, sessionTenantID uint64, messageID string,
@@ -42,6 +45,7 @@ type FeedbackRepository interface {
 
 // FeedbackService validates caller scope and applies answer feedback state transitions.
 type FeedbackService interface {
+	CompleteAssistantMessage(ctx context.Context, message *types.Message) error
 	PersistMessageChunkReferences(ctx context.Context, message *types.Message) error
 	SetMessageFeedback(
 		ctx context.Context, sessionID, messageID string, input *types.MessageFeedbackInput,

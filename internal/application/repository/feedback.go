@@ -39,6 +39,28 @@ func NewFeedbackRepository(db *gorm.DB) interfaces.FeedbackRepository {
 	return &feedbackRepository{db: db}
 }
 
+func (r *feedbackRepository) CompleteAssistantMessage(
+	ctx context.Context,
+	message *types.Message,
+	refs []*types.MessageChunkReference,
+) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&types.Message{}).
+			Where("id = ? AND session_id = ?", message.ID, message.SessionID).
+			Updates(message)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return gorm.ErrRecordNotFound
+		}
+		if len(refs) == 0 {
+			return nil
+		}
+		return tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&refs).Error
+	})
+}
+
 func (r *feedbackRepository) CreateMessageChunkReferences(
 	ctx context.Context,
 	refs []*types.MessageChunkReference,

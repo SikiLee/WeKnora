@@ -42,13 +42,17 @@ func (s *completionFeedbackService) PersistMessageChunkReferences(ctx context.Co
 	return s.err
 }
 
-func TestCompleteAssistantMessagePersistsAttributionAfterSuccessfulUpdate(t *testing.T) {
+func (s *completionFeedbackService) CompleteAssistantMessage(ctx context.Context, message *types.Message) error {
+	s.calls <- completionFeedbackCall{ctx: ctx, message: message}
+	return s.err
+}
+
+func TestCompleteAssistantMessageUsesAtomicFeedbackCompletion(t *testing.T) {
 	messageService := &completionMessageService{
 		updated: make(chan *types.Message, 1),
 		indexed: make(chan struct{}, 1),
 	}
 	feedbackService := &completionFeedbackService{
-		err:   errors.New("simulated asynchronous failure"),
 		calls: make(chan completionFeedbackCall, 1),
 	}
 	handler := &Handler{messageService: messageService, feedbackService: feedbackService}
@@ -59,35 +63,31 @@ func TestCompleteAssistantMessagePersistsAttributionAfterSuccessfulUpdate(t *tes
 		Role:                "assistant",
 		KnowledgeReferences: types.References{reference},
 	}
-	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(17))
+	parent, cancel := context.WithCancel(context.Background())
+	ctx := context.WithValue(parent, types.TenantIDContextKey, uint64(17))
+	cancel()
 
 	handler.completeAssistantMessage(ctx, message, "question")
 
 	select {
-	case updated := <-messageService.updated:
-		if updated != message || !updated.IsCompleted {
-			t.Fatalf("updated message = %#v", updated)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("message update was not called")
+	case <-messageService.updated:
+		t.Fatal("non-transactional message update was called")
+	default:
 	}
 
 	select {
 	case call := <-feedbackService.calls:
-		if call.message == message || call.message.ID != message.ID {
-			t.Fatalf("attribution message copy = %#v", call.message)
-		}
-		if call.message.KnowledgeReferences[0] == reference {
-			t.Fatal("attribution retained a mutable search-result pointer")
+		if call.message != message || !call.message.IsCompleted {
+			t.Fatalf("completion message = %#v", call.message)
 		}
 		if tenantID, ok := types.SessionTenantIDFromContext(call.ctx); !ok || tenantID != 17 {
-			t.Fatalf("attribution tenant = %d, ok=%v", tenantID, ok)
+			t.Fatalf("completion tenant = %d, ok=%v", tenantID, ok)
 		}
 		if call.ctx.Err() != nil {
-			t.Fatalf("attribution context was canceled: %v", call.ctx.Err())
+			t.Fatalf("completion context was canceled: %v", call.ctx.Err())
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("feedback attribution was not called")
+		t.Fatal("atomic feedback completion was not called")
 	}
 
 	select {
@@ -97,13 +97,15 @@ func TestCompleteAssistantMessagePersistsAttributionAfterSuccessfulUpdate(t *tes
 	}
 }
 
-func TestCompleteAssistantMessageSkipsAttributionWhenUpdateFails(t *testing.T) {
+func TestCompleteAssistantMessageSkipsDerivedWorkWhenTransactionFails(t *testing.T) {
 	messageService := &completionMessageService{
-		updateErr: errors.New("update failed"),
-		updated:   make(chan *types.Message, 1),
-		indexed:   make(chan struct{}, 1),
+		updated: make(chan *types.Message, 1),
+		indexed: make(chan struct{}, 1),
 	}
-	feedbackService := &completionFeedbackService{calls: make(chan completionFeedbackCall, 1)}
+	feedbackService := &completionFeedbackService{
+		err:   errors.New("transaction failed"),
+		calls: make(chan completionFeedbackCall, 1),
+	}
 	handler := &Handler{messageService: messageService, feedbackService: feedbackService}
 
 	handler.completeAssistantMessage(
@@ -113,18 +115,47 @@ func TestCompleteAssistantMessageSkipsAttributionWhenUpdateFails(t *testing.T) {
 	)
 
 	select {
-	case <-messageService.updated:
+	case <-feedbackService.calls:
 	case <-time.After(2 * time.Second):
-		t.Fatal("message update was not called")
+		t.Fatal("atomic completion was not called")
 	}
 	select {
-	case <-feedbackService.calls:
-		t.Fatal("feedback attribution ran after the message update failed")
-	case <-time.After(100 * time.Millisecond):
+	case <-messageService.indexed:
+		t.Fatal("history indexing ran after completion transaction failed")
+	case <-time.After(150 * time.Millisecond):
+	}
+	select {
+	case <-messageService.updated:
+		t.Fatal("non-transactional fallback update ran despite feedback service")
+	default:
+	}
+}
+
+func TestCompleteAssistantMessageFallsBackWithoutFeedbackService(t *testing.T) {
+	messageService := &completionMessageService{
+		updated: make(chan *types.Message, 1),
+		indexed: make(chan struct{}, 1),
+	}
+	handler := &Handler{messageService: messageService}
+	message := &types.Message{ID: "message-1", SessionID: "session-1", Role: "assistant"}
+
+	handler.completeAssistantMessage(
+		context.WithValue(context.Background(), types.TenantIDContextKey, uint64(17)),
+		message,
+		"question",
+	)
+
+	select {
+	case updated := <-messageService.updated:
+		if updated != message || !updated.IsCompleted {
+			t.Fatalf("updated message = %#v", updated)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("fallback message update was not called")
 	}
 	select {
 	case <-messageService.indexed:
 	case <-time.After(2 * time.Second):
-		t.Fatal("existing history indexing behavior did not run")
+		t.Fatal("history indexing was not called")
 	}
 }
