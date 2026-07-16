@@ -28,9 +28,11 @@ func RegisterMessageRoutes(r *gin.RouterGroup, handler *handler.MessageHandler, 
 		historyMessages.POST("/search", g.Viewer(), handler.SearchMessages)
 		historyMessages.GET("/chat-history-stats", g.Viewer(), handler.GetChatHistoryKBStats)
 		chatMessages.GET("/:session_id/load", g.Viewer(), handler.LoadMessages)
-		chatMessages.PUT("/:session_id/:message_id/feedback", g.Viewer(), handler.SetFeedback)
 		chatMessages.DELETE("/:session_id/:id", g.Viewer(), handler.DeleteMessage)
 	}
+	// Answer feedback represents an end user's opinion and is intentionally
+	// absent from the API-key policy registry, including for full-access keys.
+	r.PUT("/messages/:session_id/:message_id/feedback", g.Viewer(), handler.SetFeedback)
 }
 
 // RegisterSessionRoutes 注册路由。

@@ -212,17 +212,29 @@ func (p *PluginMerge) expandShortContextWithNeighbors(
 			continue
 		}
 
+		pieces := make([]chunkContextPiece, 0, len(prevIDs)+len(nextIDs)+1)
+		for _, id := range prevIDs {
+			if chunk := chunkMap[id]; chunk != nil {
+				pieces = append(pieces, chunkContextPiece{id: chunk.ID, content: chunk.Content})
+			}
+		}
+		pieces = append(pieces, chunkContextPiece{id: baseChunk.ID, content: baseChunk.Content})
+		for _, id := range nextIDs {
+			if chunk := chunkMap[id]; chunk != nil {
+				pieces = append(pieces, chunkContextPiece{id: chunk.ID, content: chunk.Content})
+			}
+		}
+		merged, includedIDs := mergeChunkContextPieces(pieces, maxLen)
+		if merged == "" {
+			continue
+		}
+
 		beforeLen := runeLen(res.Content)
 		res.Content = merged
 
-		for _, id := range prevIDs {
-			if id != "" && !containsID(res.SubChunkID, id) {
-				res.SubChunkID = append(res.SubChunkID, id)
-			}
-		}
-		for _, id := range nextIDs {
-			if id != "" && !containsID(res.SubChunkID, id) {
-				res.SubChunkID = append(res.SubChunkID, id)
+		for _, id := range includedIDs {
+			if id != baseChunk.ID {
+				res.SubChunkID = appendStableSourceIDs(res.SubChunkID, id)
 			}
 		}
 
@@ -297,15 +309,6 @@ func minInt(a, b int) int {
 		return a
 	}
 	return b
-}
-
-func containsID(ids []string, target string) bool {
-	for _, id := range ids {
-		if id == target {
-			return true
-		}
-	}
-	return false
 }
 
 func (p *PluginMerge) fetchChunksIfMissing(

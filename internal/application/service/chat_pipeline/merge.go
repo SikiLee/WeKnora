@@ -347,9 +347,7 @@ func (p *PluginMerge) resolveParentChunks(
 					parent.Content, parent.StartAt, matchStart, matchEnd, r.ImageInfo,
 				)
 			}
-			if !containsID(r.SubChunkID, r.ID) {
-				r.SubChunkID = append(r.SubChunkID, r.ID)
-			}
+			r.SubChunkID = appendStableSourceIDs(r.SubChunkID, parent.ID)
 
 		case string(types.ChunkTypeImageOCR), string(types.ChunkTypeImageCaption):
 			textParent, ok := parentMap[r.ParentChunkID]
@@ -390,9 +388,7 @@ func (p *PluginMerge) resolveParentChunks(
 			if r.ImageInfo == "" && hitImageInfo != "" {
 				r.ImageInfo = searchutil.FilterImageInfoByContentURLs(r.Content, hitImageInfo)
 			}
-			if !containsID(r.SubChunkID, r.ID) {
-				r.SubChunkID = append(r.SubChunkID, r.ID)
-			}
+			r.SubChunkID = appendStableSourceIDs(r.SubChunkID, textParent.ID, contentSource.ID)
 		}
 	}
 

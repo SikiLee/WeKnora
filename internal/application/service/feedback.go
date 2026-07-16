@@ -58,13 +58,12 @@ func (s *feedbackService) PersistMessageChunkReferences(ctx context.Context, mes
 	if err != nil {
 		return err
 	}
-	if len(existing) > 0 {
-		return nil
-	}
 
 	type referenceCandidate struct {
-		result *types.SearchResult
-		rank   int
+		chunkID        string
+		rank           int
+		retrievalScore float64
+		matchType      types.MatchType
 	}
 	candidates := make([]referenceCandidate, 0, len(message.KnowledgeReferences))
 	chunkIDs := make([]string, 0, len(message.KnowledgeReferences))
@@ -73,12 +72,26 @@ func (s *feedbackService) PersistMessageChunkReferences(ctx context.Context, mes
 		if !isFeedbackEligibleReference(ref) {
 			continue
 		}
-		if _, seen := seenIDs[ref.ID]; seen {
-			continue
+		sourceIDs := make([]string, 0, len(ref.SubChunkID)+1)
+		sourceIDs = append(sourceIDs, ref.ID)
+		sourceIDs = append(sourceIDs, ref.SubChunkID...)
+		for _, sourceID := range sourceIDs {
+			sourceID = strings.TrimSpace(sourceID)
+			if sourceID == "" {
+				continue
+			}
+			if _, seen := seenIDs[sourceID]; seen {
+				continue
+			}
+			seenIDs[sourceID] = struct{}{}
+			chunkIDs = append(chunkIDs, sourceID)
+			candidates = append(candidates, referenceCandidate{
+				chunkID:        sourceID,
+				rank:           rank,
+				retrievalScore: ref.Score,
+				matchType:      ref.MatchType,
+			})
 		}
-		seenIDs[ref.ID] = struct{}{}
-		chunkIDs = append(chunkIDs, ref.ID)
-		candidates = append(candidates, referenceCandidate{result: ref, rank: rank})
 	}
 	if len(chunkIDs) == 0 {
 		return nil
@@ -95,17 +108,20 @@ func (s *feedbackService) PersistMessageChunkReferences(ctx context.Context, mes
 		}
 	}
 
+	existingChunkIDs := make(map[string]struct{}, len(existing))
+	for _, ref := range existing {
+		if ref != nil {
+			existingChunkIDs[ref.ChunkID] = struct{}{}
+		}
+	}
+
 	refs := make([]*types.MessageChunkReference, 0, len(candidates))
 	for _, candidate := range candidates {
-		ref := candidate.result
-		chunk := chunkByID[ref.ID]
+		if _, ok := existingChunkIDs[candidate.chunkID]; ok {
+			continue
+		}
+		chunk := chunkByID[candidate.chunkID]
 		if chunk == nil || chunk.TenantID == 0 {
-			continue
-		}
-		if ref.KnowledgeID != "" && ref.KnowledgeID != chunk.KnowledgeID {
-			continue
-		}
-		if ref.KnowledgeBaseID != "" && ref.KnowledgeBaseID != chunk.KnowledgeBaseID {
 			continue
 		}
 		refs = append(refs, &types.MessageChunkReference{
@@ -117,8 +133,8 @@ func (s *feedbackService) PersistMessageChunkReferences(ctx context.Context, mes
 			KnowledgeBaseID: chunk.KnowledgeBaseID,
 			KnowledgeID:     chunk.KnowledgeID,
 			ReferenceRank:   candidate.rank,
-			RetrievalScore:  ref.Score,
-			MatchType:       strconv.Itoa(int(ref.MatchType)),
+			RetrievalScore:  candidate.retrievalScore,
+			MatchType:       strconv.Itoa(int(candidate.matchType)),
 		})
 	}
 	return s.repo.CreateMessageChunkReferences(ctx, refs)
@@ -141,6 +157,9 @@ func (s *feedbackService) SetMessageFeedback(
 	messageID string,
 	input *types.MessageFeedbackInput,
 ) (*types.MessageFeedbackState, error) {
+	if _, ok := types.TenantAPIKeyScopeFromContext(ctx); ok {
+		return nil, types.ErrFeedbackUnauthorized
+	}
 	if err := input.Validate(); err != nil {
 		return nil, err
 	}
@@ -149,18 +168,12 @@ func (s *feedbackService) SetMessageFeedback(
 		return nil, err
 	}
 
+	if err := s.PersistMessageChunkReferences(ctx, message); err != nil {
+		return nil, fmt.Errorf("persist feedback attribution fallback: %w", err)
+	}
 	refs, err := s.repo.ListMessageChunkReferences(ctx, sessionTenantID, messageID)
 	if err != nil {
 		return nil, err
-	}
-	if len(refs) == 0 {
-		if err := s.PersistMessageChunkReferences(ctx, message); err != nil {
-			return nil, fmt.Errorf("persist feedback attribution fallback: %w", err)
-		}
-		refs, err = s.repo.ListMessageChunkReferences(ctx, sessionTenantID, messageID)
-		if err != nil {
-			return nil, err
-		}
 	}
 	if err := authorizeFeedbackReferenceKnowledgeBases(ctx, refs); err != nil {
 		return nil, fmt.Errorf("%w: %v", types.ErrFeedbackUnauthorized, err)

@@ -265,34 +265,111 @@ func TestFeedbackServicePersistsEligibleSharedChunkReferences(t *testing.T) {
 	}
 }
 
-func TestFeedbackServiceRejectsMismatchedAttributionMetadata(t *testing.T) {
+func TestFeedbackServiceUsesDatabaseAttributionMetadata(t *testing.T) {
 	f := setupFeedbackServiceTest(t)
 	f.message.KnowledgeReferences = types.References{{
 		ID:              f.sharedChunk.ID,
 		KnowledgeID:     "forged-knowledge",
-		KnowledgeBaseID: f.sharedChunk.KnowledgeBaseID,
-		MatchType:       types.MatchTypeEmbedding,
-	}}
-	if err := f.service.PersistMessageChunkReferences(f.ctx, f.message); err != nil {
-		t.Fatalf("persist knowledge mismatch: %v", err)
-	}
-	refs, err := f.feedbackRepo.ListMessageChunkReferences(f.ctx, 1, f.message.ID)
-	if err != nil || len(refs) != 0 {
-		t.Fatalf("knowledge mismatch references = %#v err=%v", refs, err)
-	}
-
-	f.message.KnowledgeReferences = types.References{{
-		ID:              f.sharedChunk.ID,
-		KnowledgeID:     f.sharedChunk.KnowledgeID,
 		KnowledgeBaseID: "forged-kb",
 		MatchType:       types.MatchTypeEmbedding,
 	}}
 	if err := f.service.PersistMessageChunkReferences(f.ctx, f.message); err != nil {
-		t.Fatalf("persist KB mismatch: %v", err)
+		t.Fatalf("persist forged metadata reference: %v", err)
 	}
-	refs, err = f.feedbackRepo.ListMessageChunkReferences(f.ctx, 1, f.message.ID)
-	if err != nil || len(refs) != 0 {
-		t.Fatalf("KB mismatch references = %#v err=%v", refs, err)
+	refs, err := f.feedbackRepo.ListMessageChunkReferences(f.ctx, 1, f.message.ID)
+	if err != nil || len(refs) != 1 {
+		t.Fatalf("references = %#v err=%v", refs, err)
+	}
+	if refs[0].ChunkTenantID != f.sharedChunk.TenantID ||
+		refs[0].KnowledgeBaseID != f.sharedChunk.KnowledgeBaseID ||
+		refs[0].KnowledgeID != f.sharedChunk.KnowledgeID {
+		t.Fatalf("reference did not use database metadata: %#v", refs[0])
+	}
+}
+
+func TestFeedbackServicePersistsSubChunksAndRepairsPartialReferences(t *testing.T) {
+	f := setupFeedbackServiceTest(t)
+	sourceB := &types.Chunk{
+		ID: "source-b", TenantID: 3, KnowledgeBaseID: "kb-b",
+		KnowledgeID: "knowledge-b", Content: "source b", RecallWeight: 1,
+	}
+	sourceC := &types.Chunk{
+		ID: "source-c", TenantID: 2, KnowledgeBaseID: f.sharedChunk.KnowledgeBaseID,
+		KnowledgeID: f.sharedChunk.KnowledgeID, Content: "source c", RecallWeight: 1,
+	}
+	if err := f.db.Create([]*types.Chunk{sourceB, sourceC}).Error; err != nil {
+		t.Fatalf("create source chunks: %v", err)
+	}
+	f.message.KnowledgeReferences = types.References{{
+		ID:              f.sharedChunk.ID,
+		SubChunkID:      []string{"", sourceB.ID, sourceC.ID, sourceB.ID},
+		KnowledgeID:     "forged",
+		KnowledgeBaseID: "forged",
+		Score:           0.75,
+		MatchType:       types.MatchTypeEmbedding,
+	}}
+
+	if err := f.feedbackRepo.CreateMessageChunkReferences(f.ctx, []*types.MessageChunkReference{{
+		SessionTenantID: f.session.TenantID,
+		ChunkTenantID:   f.sharedChunk.TenantID,
+		SessionID:       f.session.ID,
+		MessageID:       f.message.ID,
+		ChunkID:         f.sharedChunk.ID,
+		KnowledgeBaseID: f.sharedChunk.KnowledgeBaseID,
+		KnowledgeID:     f.sharedChunk.KnowledgeID,
+	}}); err != nil {
+		t.Fatalf("seed partial reference: %v", err)
+	}
+
+	for attempt := 0; attempt < 2; attempt++ {
+		if err := f.service.PersistMessageChunkReferences(f.ctx, f.message); err != nil {
+			t.Fatalf("persist attempt %d: %v", attempt+1, err)
+		}
+	}
+	refs, err := f.feedbackRepo.ListMessageChunkReferences(f.ctx, f.session.TenantID, f.message.ID)
+	if err != nil {
+		t.Fatalf("list repaired references: %v", err)
+	}
+	if len(refs) != 3 {
+		t.Fatalf("repaired references = %#v, want three unique sources", refs)
+	}
+	tenants := make(map[string]uint64, len(refs))
+	for _, ref := range refs {
+		tenants[ref.ChunkID] = ref.ChunkTenantID
+	}
+	if tenants[f.sharedChunk.ID] != 2 || tenants[sourceB.ID] != 3 || tenants[sourceC.ID] != 2 {
+		t.Fatalf("source tenant attribution = %#v", tenants)
+	}
+
+	if _, err := f.service.SetMessageFeedback(
+		f.ctx, f.session.ID, f.message.ID,
+		&types.MessageFeedbackInput{
+			FeedbackType: types.FeedbackTypeDislike,
+			ReasonCode:   types.FeedbackReasonIncorrect,
+		},
+	); err != nil {
+		t.Fatalf("set dislike after repair: %v", err)
+	}
+	var chunks []*types.Chunk
+	if err := f.db.Where("id IN ?", []string{f.sharedChunk.ID, sourceB.ID, sourceC.ID}).
+		Order("id").Find(&chunks).Error; err != nil {
+		t.Fatalf("load attributed chunks: %v", err)
+	}
+	if len(chunks) != 3 {
+		t.Fatalf("attributed chunks = %#v", chunks)
+	}
+	for _, chunk := range chunks {
+		if chunk.DislikeCount != 1 || chunk.LikeCount != 0 || chunk.RecallWeight != 0.8 {
+			t.Fatalf("chunk aggregate = %#v", chunk)
+		}
+	}
+	var logCount int64
+	if err := f.db.Model(&types.ChunkFeedbackWeightLog{}).
+		Where("source_message_id = ?", f.message.ID).Count(&logCount).Error; err != nil {
+		t.Fatalf("count weight logs: %v", err)
+	}
+	if logCount != 3 {
+		t.Fatalf("weight log count = %d, want 3", logCount)
 	}
 }
 
@@ -369,46 +446,42 @@ func TestFeedbackServiceLazyFallbackAndCallerIsolation(t *testing.T) {
 	}
 }
 
-func TestFeedbackServiceRechecksTenantAPIKeyKnowledgeBaseAllowList(t *testing.T) {
+func TestFeedbackServiceRejectsEveryTenantAPIKey(t *testing.T) {
 	f := setupFeedbackServiceTest(t)
 	if err := f.service.PersistMessageChunkReferences(f.ctx, f.message); err != nil {
 		t.Fatalf("persist references: %v", err)
 	}
-	revokedCtx := types.WithTenantAPIKeyScope(f.ctx, types.TenantAPIKeyScope{
-		KeyID:            99,
-		KnowledgeBaseIDs: types.StringArray{"different-kb"},
-	})
-	_, err := f.service.SetMessageFeedback(
-		revokedCtx, f.session.ID, f.message.ID,
-		&types.MessageFeedbackInput{FeedbackType: types.FeedbackTypeLike},
-	)
-	if !errors.Is(err, types.ErrFeedbackUnauthorized) {
-		t.Fatalf("revoked allow-list error = %v, want unauthorized", err)
+	scopes := []types.TenantAPIKeyScope{
+		{KeyID: 98, Capabilities: types.StringArray{string(types.APIKeyCapabilityChat)}},
+		{KeyID: 99, FullAccess: true},
+		{KeyID: 100, KnowledgeBaseIDs: types.StringArray{f.sharedChunk.KnowledgeBaseID}},
+	}
+	for _, scope := range scopes {
+		ctx := types.WithTenantAPIKeyScope(f.ctx, scope)
+		if _, err := f.service.SetMessageFeedback(
+			ctx, f.session.ID, f.message.ID,
+			&types.MessageFeedbackInput{FeedbackType: types.FeedbackTypeLike},
+		); !errors.Is(err, types.ErrFeedbackUnauthorized) {
+			t.Fatalf("scope %#v error = %v, want unauthorized", scope, err)
+		}
 	}
 
-	var feedbackCount int64
-	if err := f.db.Model(&types.MessageFeedback{}).
-		Where("message_id = ?", f.message.ID).
+	var feedbackCount, logCount int64
+	if err := f.db.Model(&types.MessageFeedback{}).Where("message_id = ?", f.message.ID).
 		Count(&feedbackCount).Error; err != nil {
 		t.Fatalf("count feedback: %v", err)
+	}
+	if err := f.db.Model(&types.ChunkFeedbackWeightLog{}).Where("source_message_id = ?", f.message.ID).
+		Count(&logCount).Error; err != nil {
+		t.Fatalf("count weight logs: %v", err)
 	}
 	var chunk types.Chunk
 	if err := f.db.Where("id = ?", f.sharedChunk.ID).First(&chunk).Error; err != nil {
 		t.Fatalf("load chunk: %v", err)
 	}
-	if feedbackCount != 0 || chunk.LikeCount != 0 || chunk.DislikeCount != 0 || chunk.RecallWeight != 1 {
-		t.Fatalf("revoked key mutated feedback: count=%d chunk=%#v", feedbackCount, chunk)
-	}
-
-	allowedCtx := types.WithTenantAPIKeyScope(f.ctx, types.TenantAPIKeyScope{
-		KeyID:            99,
-		KnowledgeBaseIDs: types.StringArray{f.sharedChunk.KnowledgeBaseID},
-	})
-	if _, err := f.service.SetMessageFeedback(
-		allowedCtx, f.session.ID, f.message.ID,
-		&types.MessageFeedbackInput{FeedbackType: types.FeedbackTypeLike},
-	); err != nil {
-		t.Fatalf("allowed key feedback: %v", err)
+	if feedbackCount != 0 || logCount != 0 ||
+		chunk.LikeCount != 0 || chunk.DislikeCount != 0 || chunk.RecallWeight != 1 {
+		t.Fatalf("API key mutated feedback: feedback=%d logs=%d chunk=%#v", feedbackCount, logCount, chunk)
 	}
 }
 
@@ -482,53 +555,8 @@ func TestFeedbackServicePreservesRepositoryFailures(t *testing.T) {
 	})
 }
 
-func TestFeedbackServicePrincipalIsolationAndLongExternalUserID(t *testing.T) {
+func TestFeedbackServiceLongExternalUserID(t *testing.T) {
 	f := setupFeedbackServiceTest(t)
-	legacySession := &types.Session{TenantID: 1, Title: "legacy tenant session"}
-	if err := f.db.Create(legacySession).Error; err != nil {
-		t.Fatalf("create legacy session: %v", err)
-	}
-	legacyMessage := &types.Message{
-		SessionID:   legacySession.ID,
-		Role:        "assistant",
-		Content:     "legacy answer",
-		IsCompleted: true,
-		KnowledgeReferences: types.References{{
-			ID: f.sharedChunk.ID, KnowledgeID: f.sharedChunk.KnowledgeID,
-			KnowledgeBaseID: f.sharedChunk.KnowledgeBaseID, MatchType: types.MatchTypeEmbedding,
-		}},
-	}
-	insertServiceFeedbackMessage(t, f.db, legacyMessage)
-
-	keyContext := func(keyID uint64) context.Context {
-		ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(1))
-		ctx = types.WithPrincipal(ctx, types.Principal{Type: types.PrincipalAPITenant, ID: "1"})
-		return types.WithTenantAPIKeyScope(ctx, types.TenantAPIKeyScope{KeyID: keyID})
-	}
-	if _, err := f.service.SetMessageFeedback(
-		keyContext(101), legacySession.ID, legacyMessage.ID,
-		&types.MessageFeedbackInput{FeedbackType: types.FeedbackTypeLike},
-	); err != nil {
-		t.Fatalf("first tenant API key feedback: %v", err)
-	}
-	if _, err := f.service.SetMessageFeedback(
-		keyContext(202), legacySession.ID, legacyMessage.ID,
-		&types.MessageFeedbackInput{
-			FeedbackType: types.FeedbackTypeDislike,
-			ReasonCode:   types.FeedbackReasonIncorrect,
-		},
-	); err != nil {
-		t.Fatalf("second tenant API key feedback: %v", err)
-	}
-	var keyFeedbacks []*types.MessageFeedback
-	if err := f.db.Where("message_id = ?", legacyMessage.ID).
-		Order("user_id").Find(&keyFeedbacks).Error; err != nil {
-		t.Fatalf("load API key feedbacks: %v", err)
-	}
-	if len(keyFeedbacks) != 2 || keyFeedbacks[0].UserID == keyFeedbacks[1].UserID {
-		t.Fatalf("tenant API key feedbacks = %#v", keyFeedbacks)
-	}
-
 	externalPrincipal := types.Principal{
 		Type: types.PrincipalAPIExternalUser,
 		ID:   "1:" + strings.Repeat("x", 128),

@@ -41,7 +41,7 @@ func (p *PluginMerge) mergeOverlappingChunks(
 				lastChunk.Content, chunks[i].Content, lastChunk.EndAt-chunks[i].StartAt,
 			)
 			lastChunk.EndAt = chunks[i].EndAt
-			lastChunk.SubChunkID = append(lastChunk.SubChunkID, chunks[i].ID)
+			lastChunk.SubChunkID = appendMergedResultSources(lastChunk.SubChunkID, chunks[i])
 
 			if err := mergeImageInfo(ctx, lastChunk, chunks[i]); err != nil {
 				pipelineWarn(ctx, "Merge", "image_merge", map[string]interface{}{
@@ -51,9 +51,7 @@ func (p *PluginMerge) mergeOverlappingChunks(
 			}
 		} else {
 			// Fully contained: track the subsumed chunk and merge its ImageInfo
-			if !containsID(lastChunk.SubChunkID, chunks[i].ID) {
-				lastChunk.SubChunkID = append(lastChunk.SubChunkID, chunks[i].ID)
-			}
+			lastChunk.SubChunkID = appendMergedResultSources(lastChunk.SubChunkID, chunks[i])
 			if err := mergeImageInfo(ctx, lastChunk, chunks[i]); err != nil {
 				pipelineWarn(ctx, "Merge", "image_merge_contained", map[string]interface{}{
 					"knowledge_id": knowledgeID,

@@ -2,6 +2,7 @@ package router
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/Tencent/WeKnora/internal/handler"
@@ -10,6 +11,43 @@ import (
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/gin-gonic/gin"
 )
+
+func TestAnswerFeedbackRouteRejectsEveryAPIKeyBeforeHandler(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	scopes := []types.TenantAPIKeyScope{
+		{KeyID: 1, Capabilities: types.StringArray{string(types.APIKeyCapabilityChat)}},
+		{KeyID: 2, FullAccess: true},
+		{
+			KeyID:            3,
+			FullAccess:       true,
+			KnowledgeBaseIDs: types.StringArray{"allowed-kb"},
+		},
+	}
+	for _, scope := range scopes {
+		t.Run(http.StatusText(http.StatusForbidden), func(t *testing.T) {
+			engine := gin.New()
+			g := &rbacGuards{apiKeyAuthorizer: middleware.NewAPIKeyRouteAuthorizer()}
+			engine.Use(func(c *gin.Context) {
+				c.Request = c.Request.WithContext(types.WithTenantAPIKeyScope(c.Request.Context(), scope))
+				c.Next()
+			})
+			v1 := engine.Group("/api/v1")
+			v1.Use(g.apiKeyAuthorizer.Middleware())
+			RegisterMessageRoutes(v1, &handler.MessageHandler{}, g)
+
+			recorder := httptest.NewRecorder()
+			request := httptest.NewRequest(
+				http.MethodPut,
+				"/api/v1/messages/session-1/message-1/feedback",
+				nil,
+			)
+			engine.ServeHTTP(recorder, request)
+			if recorder.Code != http.StatusForbidden {
+				t.Fatalf("scope %#v status = %d, want 403", scope, recorder.Code)
+			}
+		})
+	}
+}
 
 func TestConversationRoutesDeclareChatCapability(t *testing.T) {
 	gin.SetMode(gin.TestMode)
@@ -31,7 +69,6 @@ func TestConversationRoutesDeclareChatCapability(t *testing.T) {
 		{http.MethodPost, "/api/v1/knowledge-chat/:session_id"},
 		{http.MethodPost, "/api/v1/agent-chat/:session_id"},
 		{http.MethodGet, "/api/v1/messages/:session_id/load"},
-		{http.MethodPut, "/api/v1/messages/:session_id/:message_id/feedback"},
 		{http.MethodDelete, "/api/v1/messages/:session_id/:id"},
 	}
 
@@ -45,6 +82,12 @@ func TestConversationRoutesDeclareChatCapability(t *testing.T) {
 				t.Fatalf("policy capabilities = %#v, want chat", policy.Capabilities)
 			}
 		})
+	}
+
+	if _, ok := g.apiKeyAuthorizer.Lookup(
+		http.MethodPut, "/api/v1/messages/:session_id/:message_id/feedback",
+	); ok {
+		t.Fatal("answer feedback route must remain default-deny for every API key")
 	}
 }
 
