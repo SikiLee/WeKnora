@@ -15,6 +15,12 @@ import (
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
+func feedbackTestConfig() *types.ChunkFeedbackConfig {
+	cfg := types.DefaultChunkFeedbackConfig()
+	cfg.MinimumSampleCount = 1
+	return cfg
+}
+
 func setupFeedbackRepositoryTest(t *testing.T) (*gorm.DB, *feedbackRepository, *types.Message, *types.Chunk) {
 	t.Helper()
 	dsn := fmt.Sprintf("file:feedback-repo-%d?mode=memory&cache=shared&_busy_timeout=5000", time.Now().UnixNano())
@@ -124,7 +130,7 @@ func countWeightLogs(t *testing.T, db *gorm.DB) int64 {
 func TestFeedbackRepositoryStateMachineAndIdempotency(t *testing.T) {
 	db, repo, message, chunk := setupFeedbackRepositoryTest(t)
 	ctx := context.Background()
-	cfg := types.DefaultChunkFeedbackConfig()
+	cfg := feedbackTestConfig()
 
 	liked, err := repo.ApplyMessageFeedback(ctx, feedbackMutation(message, types.FeedbackTypeLike, ""), cfg)
 	if err != nil {
@@ -225,7 +231,7 @@ func TestFeedbackRepositoryStateMachineAndIdempotency(t *testing.T) {
 func TestFeedbackRepositoryResetBaselineDoesNotReviveReasonUpdate(t *testing.T) {
 	db, repo, message, chunk := setupFeedbackRepositoryTest(t)
 	ctx := context.Background()
-	cfg := types.DefaultChunkFeedbackConfig()
+	cfg := feedbackTestConfig()
 	dislike := feedbackMutation(message, types.FeedbackTypeDislike, types.FeedbackReasonIncorrect)
 	feedback, err := repo.ApplyMessageFeedback(ctx, dislike, cfg)
 	if err != nil {
@@ -300,7 +306,7 @@ func TestFeedbackRepositoryRollsBackWhenWeightLogFails(t *testing.T) {
 		t.Fatalf("drop log table: %v", err)
 	}
 	_, err := repo.ApplyMessageFeedback(
-		context.Background(), feedbackMutation(message, types.FeedbackTypeLike, ""), types.DefaultChunkFeedbackConfig(),
+		context.Background(), feedbackMutation(message, types.FeedbackTypeLike, ""), feedbackTestConfig(),
 	)
 	if err == nil {
 		t.Fatal("expected log insert failure")
@@ -320,7 +326,7 @@ func TestFeedbackRepositoryRollsBackWhenWeightLogFails(t *testing.T) {
 
 func TestFeedbackRepositoryResetRollsBackWhenWeightLogFails(t *testing.T) {
 	db, repo, message, chunk := setupFeedbackRepositoryTest(t)
-	cfg := types.DefaultChunkFeedbackConfig()
+	cfg := feedbackTestConfig()
 	if _, err := repo.ApplyMessageFeedback(
 		context.Background(), feedbackMutation(message, types.FeedbackTypeDislike, types.FeedbackReasonIncorrect), cfg,
 	); err != nil {
@@ -345,7 +351,7 @@ func TestFeedbackRepositoryResetRollsBackWhenWeightLogFails(t *testing.T) {
 func TestFeedbackRepositorySQLiteSerializedTransitionsDoNotDrift(t *testing.T) {
 	db, repo, message, chunk := setupFeedbackRepositoryTest(t)
 	ctx := context.Background()
-	cfg := types.DefaultChunkFeedbackConfig()
+	cfg := feedbackTestConfig()
 	var wg sync.WaitGroup
 	errs := make(chan error, 20)
 	for i := 0; i < 20; i++ {
@@ -443,7 +449,7 @@ func TestFeedbackRepositoryGovernanceListFiltersSortsAndPaginates(t *testing.T) 
 				t.Fatal(err)
 			}
 			items, total, err := repo.ListChunkFeedback(
-				ctx, unrated.TenantID, unrated.KnowledgeBaseID, query, types.DefaultChunkFeedbackConfig(),
+				ctx, unrated.TenantID, unrated.KnowledgeBaseID, query, feedbackTestConfig(),
 			)
 			if err != nil {
 				t.Fatalf("list: %v", err)
@@ -458,7 +464,7 @@ func TestFeedbackRepositoryGovernanceListFiltersSortsAndPaginates(t *testing.T) 
 		t.Fatal(err)
 	}
 	ratedItems, ratedTotal, err := repo.ListChunkFeedback(
-		ctx, unrated.TenantID, unrated.KnowledgeBaseID, rated, types.DefaultChunkFeedbackConfig(),
+		ctx, unrated.TenantID, unrated.KnowledgeBaseID, rated, feedbackTestConfig(),
 	)
 	if err != nil {
 		t.Fatalf("rated list: %v", err)
@@ -477,7 +483,7 @@ func TestFeedbackRepositoryGovernanceListFiltersSortsAndPaginates(t *testing.T) 
 		t.Fatal(err)
 	}
 	items, total, err := repo.ListChunkFeedback(
-		ctx, unrated.TenantID, unrated.KnowledgeBaseID, query, types.DefaultChunkFeedbackConfig(),
+		ctx, unrated.TenantID, unrated.KnowledgeBaseID, query, feedbackTestConfig(),
 	)
 	if err != nil {
 		t.Fatalf("filtered list: %v", err)
@@ -498,7 +504,7 @@ func TestFeedbackRepositoryGovernanceListFiltersSortsAndPaginates(t *testing.T) 
 		t.Fatal(err)
 	}
 	items, total, err = repo.ListChunkFeedback(
-		ctx, unrated.TenantID, unrated.KnowledgeBaseID, query, types.DefaultChunkFeedbackConfig(),
+		ctx, unrated.TenantID, unrated.KnowledgeBaseID, query, feedbackTestConfig(),
 	)
 	if err != nil {
 		t.Fatalf("paged list: %v", err)
@@ -512,7 +518,7 @@ func TestFeedbackRepositoryGovernanceListFiltersSortsAndPaginates(t *testing.T) 
 		t.Fatal(err)
 	}
 	items, total, err = repo.ListChunkFeedback(
-		ctx, unrated.TenantID+1, unrated.KnowledgeBaseID, query, types.DefaultChunkFeedbackConfig(),
+		ctx, unrated.TenantID+1, unrated.KnowledgeBaseID, query, feedbackTestConfig(),
 	)
 	if err != nil || total != 0 || len(items) != 0 {
 		t.Fatalf("cross-tenant list leaked rows: total=%d items=%#v err=%v", total, items, err)
@@ -521,8 +527,9 @@ func TestFeedbackRepositoryGovernanceListFiltersSortsAndPaginates(t *testing.T) 
 
 func TestFeedbackRepositoryGovernanceDetailLogsAndResetBaseline(t *testing.T) {
 	db, repo, message, chunk := setupFeedbackRepositoryTest(t)
-	ctx := context.Background()
-	cfg := types.DefaultChunkFeedbackConfig()
+	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, chunk.TenantID)
+	ctx = context.WithValue(ctx, types.UserIDContextKey, "reset-admin")
+	cfg := feedbackTestConfig()
 	if err := db.Exec(
 		"INSERT INTO knowledges (id, tenant_id, knowledge_base_id, title) VALUES (?, ?, ?, ?)",
 		chunk.KnowledgeID, chunk.TenantID, chunk.KnowledgeBaseID, "Reset handbook",
@@ -605,7 +612,10 @@ func TestFeedbackRepositoryGovernanceDetailLogsAndResetBaseline(t *testing.T) {
 	}
 	if total != 3 || len(logs) != 3 || logs[0].Source != types.ChunkFeedbackLogSourceAdminReset ||
 		logs[0].SourceAction != types.ChunkFeedbackLogActionReset || logs[0].Reason != "verified again" ||
-		logs[1].Source != types.ChunkFeedbackLogSourceAdminReset || logs[1].Reason != "content corrected" {
+		logs[0].ActorTenantID != chunk.TenantID || logs[0].ActorUserID != "reset-admin" ||
+		logs[1].Source != types.ChunkFeedbackLogSourceAdminReset || logs[1].Reason != "content corrected" ||
+		logs[1].ActorTenantID != chunk.TenantID || logs[1].ActorUserID != "reset-admin" ||
+		logs[2].ActorTenantID != mutation.SessionTenantID || logs[2].ActorUserID != mutation.UserID {
 		t.Fatalf("logs after reset total=%d logs=%#v", total, logs)
 	}
 
@@ -653,7 +663,7 @@ func TestFeedbackRepositoryGovernanceJoinsFeedbackBySession(t *testing.T) {
 	if _, err := repo.ApplyMessageFeedback(
 		ctx,
 		feedbackMutation(message, types.FeedbackTypeDislike, types.FeedbackReasonIncorrect),
-		types.DefaultChunkFeedbackConfig(),
+		feedbackTestConfig(),
 	); err != nil {
 		t.Fatalf("create target feedback: %v", err)
 	}
@@ -682,7 +692,7 @@ func TestFeedbackRepositoryGovernanceJoinsFeedbackBySession(t *testing.T) {
 		t.Fatal(err)
 	}
 	items, total, err := repo.ListChunkFeedback(
-		ctx, chunk.TenantID, chunk.KnowledgeBaseID, query, types.DefaultChunkFeedbackConfig(),
+		ctx, chunk.TenantID, chunk.KnowledgeBaseID, query, feedbackTestConfig(),
 	)
 	if err != nil {
 		t.Fatalf("list: %v", err)
@@ -693,7 +703,7 @@ func TestFeedbackRepositoryGovernanceJoinsFeedbackBySession(t *testing.T) {
 	if _, err := repo.ApplyMessageFeedback(
 		ctx,
 		feedbackMutation(message, types.FeedbackTypeLike, ""),
-		types.DefaultChunkFeedbackConfig(),
+		feedbackTestConfig(),
 	); err != nil {
 		t.Fatalf("switch target feedback: %v", err)
 	}
@@ -706,7 +716,7 @@ func TestFeedbackRepositoryGovernanceJoinsFeedbackBySession(t *testing.T) {
 func TestFeedbackRepositoryResetBaselineCoversFutureFeedback(t *testing.T) {
 	db, repo, message, chunk := setupFeedbackRepositoryTest(t)
 	ctx := context.Background()
-	cfg := types.DefaultChunkFeedbackConfig()
+	cfg := feedbackTestConfig()
 	if _, err := repo.ApplyMessageFeedback(
 		ctx,
 		feedbackMutation(message, types.FeedbackTypeDislike, types.FeedbackReasonIncorrect),
@@ -761,7 +771,7 @@ func TestFeedbackRepositoryGovernanceSessionCountIncludesUnratedReferences(t *te
 	}
 
 	items, total, err := repo.ListChunkFeedback(
-		ctx, chunk.TenantID, chunk.KnowledgeBaseID, query, types.DefaultChunkFeedbackConfig(),
+		ctx, chunk.TenantID, chunk.KnowledgeBaseID, query, feedbackTestConfig(),
 	)
 	if err != nil {
 		t.Fatalf("list unrated governance: %v", err)

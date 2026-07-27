@@ -166,7 +166,7 @@ func (r *chunkRepository) ListChunkRecallWeights(
 	}
 
 	db := r.db.WithContext(ctx).Model(&types.Chunk{}).
-		Select("tenant_id, knowledge_base_id, id AS chunk_id, recall_weight")
+		Select("tenant_id, knowledge_base_id, id AS chunk_id, recall_weight, like_count, dislike_count")
 	var condition *gorm.DB
 	for _, key := range groupOrder {
 		group := groupsByKey[key]

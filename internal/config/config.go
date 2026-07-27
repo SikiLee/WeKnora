@@ -582,7 +582,9 @@ func LoadConfig() (*Config, error) {
 	applyOIDCEnvOverrides(&cfg)
 	applyAgentEnvOverrides(&cfg)
 	applyKnowledgeBaseEnvOverrides(&cfg)
-	applyFeedbackDefaultsAndEnvOverrides(&cfg)
+	if err := applyFeedbackDefaultsAndEnvOverrides(&cfg); err != nil {
+		return nil, err
+	}
 	applyAuthAndTenantDefaults(&cfg)
 	applyAuditDefaults(&cfg)
 
@@ -804,35 +806,66 @@ func registerFeedbackConfigDefaults(setDefault func(string, any)) {
 	setDefault("feedback.high_rate_threshold", defaults.HighRateThreshold)
 	setDefault("feedback.low_rate_threshold", defaults.LowRateThreshold)
 	setDefault("feedback.optimization_threshold", defaults.OptimizationThreshold)
+	setDefault("feedback.minimum_sample_count", defaults.MinimumSampleCount)
 	setDefault("feedback.high_recall_weight", defaults.HighRecallWeight)
 	setDefault("feedback.normal_recall_weight", defaults.NormalRecallWeight)
 	setDefault("feedback.low_recall_weight", defaults.LowRecallWeight)
 }
 
-func applyFeedbackDefaultsAndEnvOverrides(cfg *Config) {
+func applyFeedbackDefaultsAndEnvOverrides(cfg *Config) error {
 	if cfg.Feedback == nil {
 		cfg.Feedback = types.DefaultChunkFeedbackConfig()
 	}
 
-	applyFeedbackFloatEnv("WEKNORA_FEEDBACK_HIGH_RATE_THRESHOLD", &cfg.Feedback.HighRateThreshold)
-	applyFeedbackFloatEnv("WEKNORA_FEEDBACK_LOW_RATE_THRESHOLD", &cfg.Feedback.LowRateThreshold)
-	applyFeedbackFloatEnv("WEKNORA_FEEDBACK_OPTIMIZATION_THRESHOLD", &cfg.Feedback.OptimizationThreshold)
-	applyFeedbackFloatEnv("WEKNORA_FEEDBACK_HIGH_RECALL_WEIGHT", &cfg.Feedback.HighRecallWeight)
-	applyFeedbackFloatEnv("WEKNORA_FEEDBACK_NORMAL_RECALL_WEIGHT", &cfg.Feedback.NormalRecallWeight)
-	applyFeedbackFloatEnv("WEKNORA_FEEDBACK_LOW_RECALL_WEIGHT", &cfg.Feedback.LowRecallWeight)
+	floatOverrides := []struct {
+		name   string
+		target *float64
+	}{
+		{"WEKNORA_FEEDBACK_HIGH_RATE_THRESHOLD", &cfg.Feedback.HighRateThreshold},
+		{"WEKNORA_FEEDBACK_LOW_RATE_THRESHOLD", &cfg.Feedback.LowRateThreshold},
+		{"WEKNORA_FEEDBACK_OPTIMIZATION_THRESHOLD", &cfg.Feedback.OptimizationThreshold},
+		{"WEKNORA_FEEDBACK_HIGH_RECALL_WEIGHT", &cfg.Feedback.HighRecallWeight},
+		{"WEKNORA_FEEDBACK_NORMAL_RECALL_WEIGHT", &cfg.Feedback.NormalRecallWeight},
+		{"WEKNORA_FEEDBACK_LOW_RECALL_WEIGHT", &cfg.Feedback.LowRecallWeight},
+	}
+	for _, override := range floatOverrides {
+		if err := applyFeedbackFloatEnv(override.name, override.target); err != nil {
+			return err
+		}
+	}
+	if err := applyFeedbackInt64Env(
+		"WEKNORA_FEEDBACK_MINIMUM_SAMPLE_COUNT",
+		&cfg.Feedback.MinimumSampleCount,
+	); err != nil {
+		return err
+	}
+	return nil
 }
 
-func applyFeedbackFloatEnv(name string, target *float64) {
+func applyFeedbackFloatEnv(name string, target *float64) error {
 	value := strings.TrimSpace(os.Getenv(name))
 	if value == "" {
-		return
+		return nil
 	}
 	parsed, err := strconv.ParseFloat(value, 64)
 	if err != nil {
-		fmt.Printf("[config] %s=%q is not a float, ignoring\n", name, value)
-		return
+		return fmt.Errorf("%s must be a valid float: %q", name, value)
 	}
 	*target = parsed
+	return nil
+}
+
+func applyFeedbackInt64Env(name string, target *int64) error {
+	value := strings.TrimSpace(os.Getenv(name))
+	if value == "" {
+		return nil
+	}
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return fmt.Errorf("%s must be a valid integer: %q", name, value)
+	}
+	*target = parsed
+	return nil
 }
 
 // applyAuthAndTenantDefaults fills in defaults for the Auth and Tenant

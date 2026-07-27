@@ -256,6 +256,15 @@ func assertSQLiteFeedbackSchema(t *testing.T, dbPath string, wantPresent bool) {
 	} {
 		require.Equal(t, wantPresent, sqliteTableExists(t, db, table), "table %s", table)
 	}
+	for _, column := range []string{"actor_tenant_id", "actor_user_id"} {
+		require.Equal(
+			t,
+			wantPresent,
+			sqliteColumnExists(t, db, "chunk_feedback_weight_logs", column),
+			"chunk_feedback_weight_logs.%s",
+			column,
+		)
+	}
 }
 
 func sqliteColumnExists(t *testing.T, db *sql.DB, tableName, columnName string) bool {

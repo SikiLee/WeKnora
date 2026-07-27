@@ -51,6 +51,8 @@ export interface ChunkFeedbackWeightLog {
   source_action: string
   source_message_id?: string
   source_feedback_id?: string
+  actor_tenant_id?: number
+  actor_user_id?: string
   reason?: string
   created_at: string
 }

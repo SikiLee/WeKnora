@@ -264,7 +264,7 @@ func RegisterChunkFeedbackRoutes(r *gin.RouterGroup, h *handler.ChunkFeedbackHan
 		group.GET("", h.List)
 		group.GET("/:chunk_id/weight-logs", h.WeightLogs)
 		group.GET("/:chunk_id", h.Detail)
-		group.POST("/:chunk_id/reset", h.Reset)
+		group.POST("/:chunk_id/reset", g.KBFeedbackReset(), h.Reset)
 	}
 }
 

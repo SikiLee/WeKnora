@@ -99,7 +99,7 @@ func setupFeedbackPostgresTest(t *testing.T) (*gorm.DB, *feedbackRepository) {
 	)`).Error; err != nil {
 		t.Fatalf("create PostgreSQL knowledges table: %v", err)
 	}
-	migrationPath := filepath.Join("..", "..", "..", "migrations", "versioned", "000070_answer_feedback.up.sql")
+	migrationPath := filepath.Join("..", "..", "..", "migrations", "versioned", "000077_answer_feedback.up.sql")
 	migration, err := os.ReadFile(migrationPath)
 	if err != nil {
 		t.Fatalf("read feedback migration: %v", err)
@@ -173,7 +173,7 @@ func TestFeedbackRepositoryPostgresConcurrentTransactions(t *testing.T) {
 				MessageID:       fmt.Sprintf("message-%d", index),
 				FeedbackType:    feedbackType,
 				ReasonCode:      reasonCode,
-			}, types.DefaultChunkFeedbackConfig())
+			}, feedbackTestConfig())
 			errs <- err
 		}()
 	}
@@ -250,7 +250,7 @@ func TestFeedbackRepositoryPostgresConcurrentSameMessageTransitions(t *testing.T
 				MessageID:       "message-1",
 				FeedbackType:    feedbackType,
 				ReasonCode:      reasonCode,
-			}, types.DefaultChunkFeedbackConfig())
+			}, feedbackTestConfig())
 			errs <- err
 		}()
 	}
@@ -269,7 +269,7 @@ func TestFeedbackRepositoryPostgresConcurrentSameMessageTransitions(t *testing.T
 		SessionID:       "session-1",
 		MessageID:       "message-1",
 		FeedbackType:    types.FeedbackTypeLike,
-	}, types.DefaultChunkFeedbackConfig()); err != nil {
+	}, feedbackTestConfig()); err != nil {
 		t.Fatalf("deterministic final transition: %v", err)
 	}
 	var feedbackCount int64
@@ -291,7 +291,7 @@ func TestFeedbackRepositoryPostgresConcurrentSameMessageTransitions(t *testing.T
 func TestFeedbackRepositoryPostgresGovernanceQueriesAndReset(t *testing.T) {
 	db, repo := setupFeedbackPostgresTest(t)
 	ctx := context.Background()
-	cfg := types.DefaultChunkFeedbackConfig()
+	cfg := feedbackTestConfig()
 	if err := db.Exec(`INSERT INTO knowledges
 		(id, tenant_id, knowledge_base_id, title)
 		VALUES ('knowledge-1', 9, 'kb-1', 'PostgreSQL handbook')`).Error; err != nil {
@@ -402,7 +402,7 @@ func TestFeedbackRepositoryPostgresGovernanceQueriesAndReset(t *testing.T) {
 
 func TestFeedbackRepositoryPostgresResetSerializesWithFeedback(t *testing.T) {
 	db, repo := setupFeedbackPostgresTest(t)
-	cfg := types.DefaultChunkFeedbackConfig()
+	cfg := feedbackTestConfig()
 	if err := db.Exec(`INSERT INTO chunks
 		(id, tenant_id, knowledge_base_id, knowledge_id, content)
 		VALUES ('chunk-1', 9, 'kb-1', 'knowledge-1', 'content')`).Error; err != nil {

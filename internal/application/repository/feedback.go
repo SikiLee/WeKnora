@@ -431,6 +431,8 @@ func recalculateChunkFeedback(
 		SourceAction:     action,
 		SourceMessageID:  mutation.MessageID,
 		SourceFeedbackID: feedbackID,
+		ActorTenantID:    mutation.SessionTenantID,
+		ActorUserID:      mutation.UserID,
 		Reason:           reason,
 		CreatedAt:        now,
 	}
@@ -627,7 +629,8 @@ func (r *feedbackRepository) ListChunkFeedbackWeightLogs(
 	}
 	var logs []*types.ChunkFeedbackWeightLogItem
 	err := base.Select(
-		"id, old_weight, new_weight, source, source_action, source_message_id, source_feedback_id, reason, created_at",
+		"id, old_weight, new_weight, source, source_action, source_message_id, source_feedback_id, " +
+			"actor_tenant_id, actor_user_id, reason, created_at",
 	).
 		Order("created_at DESC, id DESC").
 		Offset(page.Offset()).
@@ -661,6 +664,11 @@ func (r *feedbackRepository) ResetChunkFeedback(
 	if cfg == nil {
 		cfg = types.DefaultChunkFeedbackConfig()
 	}
+	actorTenantID, _ := types.TenantIDFromContext(ctx)
+	if actorTenantID == 0 {
+		actorTenantID = tenantID
+	}
+	actorUserID, _ := types.UserIDFromContext(ctx)
 	var detail *types.ChunkFeedbackDetail
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		query := tx.Where("tenant_id = ? AND knowledge_base_id = ? AND id = ?", tenantID, kbID, chunkID)
@@ -713,6 +721,8 @@ func (r *feedbackRepository) ResetChunkFeedback(
 			NewWeight:     cfg.NormalRecallWeight,
 			Source:        types.ChunkFeedbackLogSourceAdminReset,
 			SourceAction:  types.ChunkFeedbackLogActionReset,
+			ActorTenantID: actorTenantID,
+			ActorUserID:   actorUserID,
 			Reason:        reason,
 			CreatedAt:     now,
 		}

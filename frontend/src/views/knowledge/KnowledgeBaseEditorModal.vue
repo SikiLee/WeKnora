@@ -432,7 +432,7 @@
 
                 <div v-if="mode === 'edit' && kbId && canGovernFeedback && currentSection === 'feedbackQuality'"
                   class="section">
-                  <ChunkFeedbackGovernance :kb-id="kbId" />
+                  <ChunkFeedbackGovernance :kb-id="kbId" :can-reset="canViewActivity" />
                 </div>
               </div>
 

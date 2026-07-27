@@ -360,9 +360,13 @@ func TestListChunkRecallWeights_SQLiteScopesTenantAndKnowledgeBase(t *testing.T)
 	ctx := context.Background()
 
 	owned := makeChunk("kb-owned", "knowledge-owned", "text")
+	owned.LikeCount = 8
+	owned.DislikeCount = 2
 	owned.RecallWeight = 1.2
 	shared := makeChunk("kb-shared", "knowledge-shared", "text")
 	shared.TenantID = 2
+	shared.LikeCount = 1
+	shared.DislikeCount = 4
 	shared.RecallWeight = 0.8
 	require.NoError(t, repo.CreateChunks(ctx, []*types.Chunk{owned, shared}))
 
@@ -382,9 +386,13 @@ func TestListChunkRecallWeights_SQLiteScopesTenantAndKnowledgeBase(t *testing.T)
 	}
 	assert.Equal(t, uint64(1), byID[owned.ID].TenantID)
 	assert.Equal(t, "kb-owned", byID[owned.ID].KnowledgeBaseID)
+	assert.Equal(t, int64(8), byID[owned.ID].LikeCount)
+	assert.Equal(t, int64(2), byID[owned.ID].DislikeCount)
 	assert.Equal(t, 1.2, byID[owned.ID].RecallWeight)
 	assert.Equal(t, uint64(2), byID[shared.ID].TenantID)
 	assert.Equal(t, "kb-shared", byID[shared.ID].KnowledgeBaseID)
+	assert.Equal(t, int64(1), byID[shared.ID].LikeCount)
+	assert.Equal(t, int64(4), byID[shared.ID].DislikeCount)
 	assert.Equal(t, 0.8, byID[shared.ID].RecallWeight)
 
 	wrongScopeOnly, err := repo.ListChunkRecallWeights(ctx, []interfaces.ChunkFeedbackWeightScope{

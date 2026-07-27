@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"sync"
 	"testing"
 
 	"github.com/Tencent/WeKnora/internal/types"
@@ -13,8 +14,11 @@ import (
 )
 
 type stubKnowledgeBaseService struct {
-	kb      *types.KnowledgeBase
-	results []*types.SearchResult
+	kb           *types.KnowledgeBase
+	kbs          []*types.KnowledgeBase
+	results      []*types.SearchResult
+	searchMu     sync.Mutex
+	searchParams []types.SearchParams
 }
 
 func (s *stubKnowledgeBaseService) CreateKnowledgeBase(context.Context, *types.KnowledgeBase) (*types.KnowledgeBase, error) {
@@ -30,7 +34,7 @@ func (s *stubKnowledgeBaseService) GetKnowledgeBaseByIDOnly(context.Context, str
 }
 
 func (s *stubKnowledgeBaseService) GetKnowledgeBasesByIDsOnly(context.Context, []string) ([]*types.KnowledgeBase, error) {
-	return nil, nil
+	return s.kbs, nil
 }
 
 func (s *stubKnowledgeBaseService) FillKnowledgeBaseCounts(context.Context, *types.KnowledgeBase) error {
@@ -63,7 +67,14 @@ func (s *stubKnowledgeBaseService) TogglePinKnowledgeBase(context.Context, strin
 	return nil, nil
 }
 
-func (s *stubKnowledgeBaseService) HybridSearch(context.Context, string, types.SearchParams) ([]*types.SearchResult, error) {
+func (s *stubKnowledgeBaseService) HybridSearch(
+	_ context.Context,
+	_ string,
+	params types.SearchParams,
+) ([]*types.SearchResult, error) {
+	s.searchMu.Lock()
+	s.searchParams = append(s.searchParams, params)
+	s.searchMu.Unlock()
 	return s.results, nil
 }
 
@@ -71,8 +82,17 @@ func (s *stubKnowledgeBaseService) GetQueryEmbedding(context.Context, string, st
 	return nil, nil
 }
 
-func (s *stubKnowledgeBaseService) ResolveEmbeddingModelKeys(context.Context, []*types.KnowledgeBase) map[string]string {
-	return nil
+func (s *stubKnowledgeBaseService) ResolveEmbeddingModelKeys(
+	_ context.Context,
+	kbs []*types.KnowledgeBase,
+) map[string]string {
+	keys := make(map[string]string, len(kbs))
+	for _, kb := range kbs {
+		if kb != nil {
+			keys[kb.ID] = kb.EmbeddingModelID
+		}
+	}
+	return keys
 }
 
 func (s *stubKnowledgeBaseService) CopyKnowledgeBase(

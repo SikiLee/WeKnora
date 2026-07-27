@@ -77,11 +77,27 @@ func (t *KnowledgeSearchTool) applyFeedbackWeights(
 		return
 	}
 	weightByScope := make(map[string]float64, len(weights))
-	for _, weight := range weights {
-		if weight.RecallWeight <= 0 || math.IsNaN(weight.RecallWeight) || math.IsInf(weight.RecallWeight, 0) {
+	var feedbackConfig *types.ChunkFeedbackConfig
+	if t.config != nil {
+		feedbackConfig = t.config.Feedback
+	}
+	for _, aggregate := range weights {
+		weight := aggregate.RecallWeight
+		if feedbackConfig != nil {
+			_, weight, _ = types.CalculateChunkFeedback(
+				aggregate.LikeCount,
+				aggregate.DislikeCount,
+				feedbackConfig,
+			)
+		}
+		if weight <= 0 || math.IsNaN(weight) || math.IsInf(weight, 0) {
 			continue
 		}
-		weightByScope[agentFeedbackWeightKey(weight.TenantID, weight.KnowledgeBaseID, weight.ChunkID)] = weight.RecallWeight
+		weightByScope[agentFeedbackWeightKey(
+			aggregate.TenantID,
+			aggregate.KnowledgeBaseID,
+			aggregate.ChunkID,
+		)] = weight
 	}
 	for _, item := range candidates {
 		weight := weightByScope[agentFeedbackWeightKey(item.tenantID, item.kbID, item.result.ID)]

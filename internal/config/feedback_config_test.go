@@ -27,6 +27,7 @@ func TestFeedbackConfigDefaultsMergePartialYAMLSection(t *testing.T) {
 		cfg.Feedback.HighRateThreshold != 0.9 ||
 		cfg.Feedback.LowRateThreshold != 0.5 ||
 		cfg.Feedback.OptimizationThreshold != 0.2 ||
+		cfg.Feedback.MinimumSampleCount != 5 ||
 		cfg.Feedback.HighRecallWeight != 1.2 ||
 		cfg.Feedback.NormalRecallWeight != 1.0 ||
 		cfg.Feedback.LowRecallWeight != 0.8 {
@@ -41,7 +42,9 @@ func TestApplyFeedbackDefaultsAndEnvOverrides(t *testing.T) {
 	t.Run("defaults when section is absent", func(t *testing.T) {
 		cfg := &Config{}
 
-		applyFeedbackDefaultsAndEnvOverrides(cfg)
+		if err := applyFeedbackDefaultsAndEnvOverrides(cfg); err != nil {
+			t.Fatalf("apply defaults: %v", err)
+		}
 
 		if cfg.Feedback == nil {
 			t.Fatal("Feedback config was not initialized")
@@ -49,6 +52,7 @@ func TestApplyFeedbackDefaultsAndEnvOverrides(t *testing.T) {
 		if cfg.Feedback.HighRateThreshold != 0.8 ||
 			cfg.Feedback.LowRateThreshold != 0.5 ||
 			cfg.Feedback.OptimizationThreshold != 0.2 ||
+			cfg.Feedback.MinimumSampleCount != 5 ||
 			cfg.Feedback.HighRecallWeight != 1.2 ||
 			cfg.Feedback.NormalRecallWeight != 1.0 ||
 			cfg.Feedback.LowRecallWeight != 0.8 {
@@ -60,16 +64,20 @@ func TestApplyFeedbackDefaultsAndEnvOverrides(t *testing.T) {
 		t.Setenv("WEKNORA_FEEDBACK_HIGH_RATE_THRESHOLD", "0.9")
 		t.Setenv("WEKNORA_FEEDBACK_LOW_RATE_THRESHOLD", "0.4")
 		t.Setenv("WEKNORA_FEEDBACK_OPTIMIZATION_THRESHOLD", "0.1")
+		t.Setenv("WEKNORA_FEEDBACK_MINIMUM_SAMPLE_COUNT", "9")
 		t.Setenv("WEKNORA_FEEDBACK_HIGH_RECALL_WEIGHT", "1.3")
 		t.Setenv("WEKNORA_FEEDBACK_NORMAL_RECALL_WEIGHT", "1.1")
 		t.Setenv("WEKNORA_FEEDBACK_LOW_RECALL_WEIGHT", "0.7")
 
 		cfg := &Config{Feedback: types.DefaultChunkFeedbackConfig()}
-		applyFeedbackDefaultsAndEnvOverrides(cfg)
+		if err := applyFeedbackDefaultsAndEnvOverrides(cfg); err != nil {
+			t.Fatalf("apply overrides: %v", err)
+		}
 
 		if cfg.Feedback.HighRateThreshold != 0.9 ||
 			cfg.Feedback.LowRateThreshold != 0.4 ||
 			cfg.Feedback.OptimizationThreshold != 0.1 ||
+			cfg.Feedback.MinimumSampleCount != 9 ||
 			cfg.Feedback.HighRecallWeight != 1.3 ||
 			cfg.Feedback.NormalRecallWeight != 1.1 ||
 			cfg.Feedback.LowRecallWeight != 0.7 {
@@ -80,7 +88,9 @@ func TestApplyFeedbackDefaultsAndEnvOverrides(t *testing.T) {
 
 func TestValidateConfigFeedback(t *testing.T) {
 	cfg := &Config{}
-	applyFeedbackDefaultsAndEnvOverrides(cfg)
+	if err := applyFeedbackDefaultsAndEnvOverrides(cfg); err != nil {
+		t.Fatalf("apply defaults: %v", err)
+	}
 
 	if err := ValidateConfig(cfg); err != nil {
 		t.Fatalf("ValidateConfig rejected defaults: %v", err)
@@ -100,7 +110,9 @@ func TestValidateConfigFeedbackRejectsNonFiniteEnvOverride(t *testing.T) {
 	t.Setenv("WEKNORA_FEEDBACK_HIGH_RECALL_WEIGHT", "+Inf")
 
 	cfg := &Config{}
-	applyFeedbackDefaultsAndEnvOverrides(cfg)
+	if err := applyFeedbackDefaultsAndEnvOverrides(cfg); err != nil {
+		t.Fatalf("apply non-finite override: %v", err)
+	}
 
 	err := ValidateConfig(cfg)
 	if err == nil {
@@ -108,5 +120,28 @@ func TestValidateConfigFeedbackRejectsNonFiniteEnvOverride(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "must be finite") {
 		t.Fatalf("ValidateConfig error = %q, want finite validation", err.Error())
+	}
+}
+
+func TestApplyFeedbackDefaultsAndEnvOverridesRejectsMalformedExplicitValues(t *testing.T) {
+	tests := []struct {
+		name  string
+		env   string
+		value string
+	}{
+		{name: "float", env: "WEKNORA_FEEDBACK_HIGH_RATE_THRESHOLD", value: "not-a-number"},
+		{name: "integer", env: "WEKNORA_FEEDBACK_MINIMUM_SAMPLE_COUNT", value: "five"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(tc.env, tc.value)
+			err := applyFeedbackDefaultsAndEnvOverrides(&Config{})
+			if err == nil {
+				t.Fatalf("expected malformed %s to fail", tc.env)
+			}
+			if !strings.Contains(err.Error(), tc.env) {
+				t.Fatalf("error %q does not identify %s", err, tc.env)
+			}
+		})
 	}
 }

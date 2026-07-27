@@ -83,6 +83,7 @@ export default {
         time: '时间',
         change: '权重变化',
         action: '动作',
+        operator: '操作人',
         reason: '原因',
       },
       actions: {

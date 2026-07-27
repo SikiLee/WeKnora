@@ -89,6 +89,73 @@ func TestRequireKBFeedbackGovernanceMatrix(t *testing.T) {
 	}
 }
 
+func TestRequireKBFeedbackResetMatrix(t *testing.T) {
+	enabled := true
+	cfg := &config.Config{Tenant: &config.TenantConfig{EnableRBAC: &enabled}}
+	tests := []struct {
+		name       string
+		role       types.TenantRole
+		userID     string
+		access     *KBAccess
+		apiKey     bool
+		verified   bool
+		wantStatus int
+	}{
+		{
+			name: "creator", role: types.TenantRoleContributor, userID: "creator",
+			access: ownFeedbackKBAccess("creator"), verified: true, wantStatus: http.StatusNoContent,
+		},
+		{
+			name: "verified admin", role: types.TenantRoleAdmin, userID: "admin",
+			access: ownFeedbackKBAccess("creator"), verified: true, wantStatus: http.StatusNoContent,
+		},
+		{
+			name: "non-creator contributor", role: types.TenantRoleContributor, userID: "other",
+			access: ownFeedbackKBAccess("creator"), verified: true, wantStatus: http.StatusForbidden,
+		},
+		{
+			name: "shared editor", role: types.TenantRoleContributor, userID: "editor",
+			access: sharedFeedbackKBAccess(types.OrgRoleEditor), verified: true, wantStatus: http.StatusForbidden,
+		},
+		{
+			name: "synthetic admin", role: types.TenantRoleAdmin, userID: "admin",
+			access: ownFeedbackKBAccess("creator"), wantStatus: http.StatusForbidden,
+		},
+		{
+			name: "api key", role: types.TenantRoleAdmin, userID: "system",
+			access: ownFeedbackKBAccess("creator"), apiKey: true, verified: true, wantStatus: http.StatusForbidden,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			r := gin.New()
+			r.Use(func(c *gin.Context) {
+				ctx := context.WithValue(c.Request.Context(), types.TenantIDContextKey, uint64(1))
+				ctx = context.WithValue(ctx, types.UserIDContextKey, tc.userID)
+				ctx = context.WithValue(ctx, types.TenantRoleContextKey, tc.role)
+				ctx = context.WithValue(ctx, types.TenantRoleVerifiedContextKey, tc.verified)
+				if tc.apiKey {
+					ctx = types.WithTenantAPIKeyScope(ctx, types.TenantAPIKeyScope{KeyID: 7, FullAccess: true})
+				}
+				c.Request = c.Request.WithContext(ctx)
+				c.Set(KBAccessContextKey, tc.access)
+				c.Next()
+			})
+			r.POST("/reset", RequireKBFeedbackReset(cfg), func(c *gin.Context) {
+				c.Status(http.StatusNoContent)
+			})
+
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/reset", nil))
+			if w.Code != tc.wantStatus {
+				t.Fatalf("status=%d want=%d body=%s", w.Code, tc.wantStatus, w.Body.String())
+			}
+		})
+	}
+}
+
 func TestRequireKBFeedbackGovernanceAllowsSharedEditorThroughAccessChain(t *testing.T) {
 	enabled := true
 	cfg := &config.Config{Tenant: &config.TenantConfig{EnableRBAC: &enabled}}

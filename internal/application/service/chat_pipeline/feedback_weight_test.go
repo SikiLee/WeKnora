@@ -129,6 +129,20 @@ func TestFeedbackWeightFallsBackToSearchResultsAndDefaultsMissingOrInvalidWeight
 	assert.True(t, invalid.FeedbackWeightApplied)
 }
 
+func TestEffectiveChunkRecallWeightUsesCurrentPolicy(t *testing.T) {
+	cfg := types.DefaultChunkFeedbackConfig()
+	cfg.MinimumSampleCount = 1
+	cfg.HighRateThreshold = 0.9
+	aggregate := interfaces.ChunkRecallWeight{
+		LikeCount: 8, DislikeCount: 2, RecallWeight: 9,
+	}
+
+	assert.Equal(t, cfg.NormalRecallWeight, effectiveChunkRecallWeight(aggregate, cfg))
+
+	cfg.HighRateThreshold = 0.8
+	assert.Equal(t, cfg.HighRecallWeight, effectiveChunkRecallWeight(aggregate, cfg))
+}
+
 func TestFeedbackWeightQueryFailurePreservesScoresOrderAndMarkers(t *testing.T) {
 	reader := &fakeRecallWeightReader{err: errors.New("database unavailable")}
 	plugin := &PluginFeedbackWeight{chunkRepo: reader}

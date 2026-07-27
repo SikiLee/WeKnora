@@ -51,6 +51,7 @@ type RouterParams struct {
 	AuditLogHandler              *handler.AuditLogHandler
 	AuditLogService              interfaces.AuditLogService
 	ChunkHandler                 *handler.ChunkHandler
+	ChunkFeedbackHandler         *handler.ChunkFeedbackHandler
 	SessionHandler               *session.Handler
 	MessageHandler               *handler.MessageHandler
 	MessageSuggestionHandler     *handler.MessageSuggestionHandler

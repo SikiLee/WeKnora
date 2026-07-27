@@ -589,6 +589,10 @@ func (g *rbacGuards) KBFeedbackGovernance() gin.HandlerFunc {
 	return middleware.RequireKBFeedbackGovernance(g.cfg)
 }
 
+func (g *rbacGuards) KBFeedbackReset() gin.HandlerFunc {
+	return middleware.RequireKBFeedbackReset(g.cfg)
+}
+
 // KBAccessReadFromKnowledgeIDParam is like KBAccessRead but resolves
 // the kb_id by walking a knowledge document (URL `:knowledge_id`)
 // back to its parent KB. Used by the chunk routes whose URL addresses

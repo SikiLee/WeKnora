@@ -17,7 +17,7 @@ func init() {
 }
 
 func TestReadURL(t *testing.T) {
-	client, err := NewClient("localhost:50051")
+	client, err := NewClient(testDocReaderAddress())
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
@@ -47,7 +47,7 @@ func TestReadURL(t *testing.T) {
 }
 
 func TestReadFile(t *testing.T) {
-	client, err := NewClient("localhost:50051")
+	client, err := NewClient(testDocReaderAddress())
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
@@ -82,4 +82,11 @@ func TestReadFile(t *testing.T) {
 
 	imageRefs := GetImageRefsFromResponse(resp)
 	log.Printf("INFO: content_len=%d, images=%d", len(resp.MarkdownContent), len(imageRefs))
+}
+
+func testDocReaderAddress() string {
+	if address := os.Getenv("DOCREADER_ADDR"); address != "" {
+		return address
+	}
+	return "localhost:50051"
 }

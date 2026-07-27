@@ -20,6 +20,12 @@ import (
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
 
+func feedbackServiceTestConfig() *config.Config {
+	policy := types.DefaultChunkFeedbackConfig()
+	policy.MinimumSampleCount = 1
+	return &config.Config{Feedback: policy}
+}
+
 type feedbackServiceFixture struct {
 	db           *gorm.DB
 	service      interfaces.FeedbackService
@@ -175,7 +181,7 @@ func setupFeedbackServiceTest(t *testing.T) *feedbackServiceFixture {
 	messageRepo := repository.NewMessageRepository(db)
 	sessionRepo := repository.NewSessionRepository(db)
 	chunkRepo := repository.NewChunkRepository(db)
-	cfg := &config.Config{Feedback: types.DefaultChunkFeedbackConfig()}
+	cfg := feedbackServiceTestConfig()
 	feedbackSvc := service.NewFeedbackService(feedbackRepo, sessionRepo, messageRepo, chunkRepo, cfg)
 	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(1))
 	ctx = context.WithValue(ctx, types.UserIDContextKey, "user-1")
@@ -229,7 +235,7 @@ func TestFeedbackServiceResetUsesTransactionalSnapshot(t *testing.T) {
 		nil,
 		nil,
 		nil,
-		&config.Config{Feedback: types.DefaultChunkFeedbackConfig()},
+		feedbackServiceTestConfig(),
 	)
 	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(1))
 	detail, err := svc.ResetChunkFeedback(ctx, "kb-1", "chunk-1", &types.ChunkFeedbackResetInput{})
@@ -454,7 +460,7 @@ func TestFeedbackServiceCompletionTransactionRollsBackAndRetries(t *testing.T) {
 		f.sessionRepo,
 		f.messageRepo,
 		f.chunkRepo,
-		&config.Config{Feedback: types.DefaultChunkFeedbackConfig()},
+		feedbackServiceTestConfig(),
 	)
 	for attempt := 0; attempt < 2; attempt++ {
 		if err := restartedService.CompleteAssistantMessage(f.ctx, message); err != nil {
@@ -650,7 +656,7 @@ func TestFeedbackServicePreservesRepositoryFailures(t *testing.T) {
 			failingFeedbackSessionRepository{SessionRepository: f.sessionRepo, err: dbErr},
 			f.messageRepo,
 			f.chunkRepo,
-			&config.Config{Feedback: types.DefaultChunkFeedbackConfig()},
+			feedbackServiceTestConfig(),
 		)
 		_, err := svc.SetMessageFeedback(
 			f.ctx, f.session.ID, f.message.ID,
@@ -667,7 +673,7 @@ func TestFeedbackServicePreservesRepositoryFailures(t *testing.T) {
 			f.sessionRepo,
 			failingFeedbackMessageRepository{MessageRepository: f.messageRepo, err: dbErr},
 			f.chunkRepo,
-			&config.Config{Feedback: types.DefaultChunkFeedbackConfig()},
+			feedbackServiceTestConfig(),
 		)
 		_, err := svc.SetMessageFeedback(
 			f.ctx, f.session.ID, f.message.ID,

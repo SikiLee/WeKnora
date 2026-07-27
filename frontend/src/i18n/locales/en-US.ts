@@ -83,6 +83,7 @@ export default {
         time: 'Time',
         change: 'Weight change',
         action: 'Action',
+        operator: 'Operator',
         reason: 'Reason',
       },
       actions: {

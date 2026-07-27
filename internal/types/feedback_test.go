@@ -26,6 +26,13 @@ func TestCalculateChunkFeedback(t *testing.T) {
 			wantWeight: cfg.NormalRecallWeight,
 		},
 		{
+			name:       "insufficient samples keep neutral recall",
+			likes:      1,
+			dislikes:   0,
+			wantRate:   ptrFloat(1),
+			wantWeight: cfg.NormalRecallWeight,
+		},
+		{
 			name:       "high positive rate boosts recall",
 			likes:      8,
 			dislikes:   2,
@@ -122,6 +129,14 @@ func TestChunkFeedbackConfigValidate(t *testing.T) {
 		cfg.LowRecallWeight = 0
 		if err := cfg.Validate(); err == nil {
 			t.Fatal("Validate unexpectedly accepted zero recall weight")
+		}
+	})
+
+	t.Run("rejects non-positive minimum sample count", func(t *testing.T) {
+		cfg := DefaultChunkFeedbackConfig()
+		cfg.MinimumSampleCount = 0
+		if err := cfg.Validate(); err == nil {
+			t.Fatal("Validate unexpectedly accepted zero minimum sample count")
 		}
 	})
 

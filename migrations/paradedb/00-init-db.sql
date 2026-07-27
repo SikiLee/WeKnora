@@ -246,6 +246,8 @@ CREATE TABLE IF NOT EXISTS chunk_feedback_weight_logs (
     source_action VARCHAR(64) NOT NULL,
     source_message_id VARCHAR(36) NOT NULL DEFAULT '',
     source_feedback_id VARCHAR(36) NOT NULL DEFAULT '',
+    actor_tenant_id BIGINT NOT NULL DEFAULT 0,
+    actor_user_id VARCHAR(512) NOT NULL DEFAULT '',
     reason TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

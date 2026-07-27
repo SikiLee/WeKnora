@@ -293,9 +293,9 @@ func RequireOwnershipOrRole(min types.TenantRole, lookup CreatorLookup, cfg *con
 	}
 }
 
-// RequireKBFeedbackGovernance applies the governance matrix after a KB
+// RequireKBFeedbackGovernance applies the read-governance matrix after a KB
 // feedback access guard has resolved the target. KB editors, the creator, and
-// verified source-tenant admins may inspect or reset governance data.
+// verified source-tenant admins may inspect governance data.
 func RequireKBFeedbackGovernance(cfg *config.Config) gin.HandlerFunc {
 	warnOnNilConfig(cfg)
 	return func(c *gin.Context) {
@@ -341,6 +341,61 @@ func RequireKBFeedbackGovernance(cfg *config.Config) gin.HandlerFunc {
 			_ = svc.LogDenied(ctx, c, callerTenantID, uid, string(types.TenantRoleFromContext(ctx)), "kb_feedback_governance")
 		}
 		c.JSON(http.StatusForbidden, gin.H{"error": "Forbidden: cannot govern feedback for this knowledge base"})
+		c.Abort()
+	}
+}
+
+// RequireKBFeedbackReset restricts destructive aggregate resets to the source
+// KB creator or a verified admin in the source tenant. Read-only editors and
+// contributors deliberately remain outside this boundary.
+func RequireKBFeedbackReset(cfg *config.Config) gin.HandlerFunc {
+	warnOnNilConfig(cfg)
+	return func(c *gin.Context) {
+		ctx := c.Request.Context()
+		if _, ok := types.TenantAPIKeyScopeFromContext(ctx); ok {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+				"error": "Forbidden: API keys cannot reset feedback",
+			})
+			return
+		}
+		access, ok := KBAccessFromContext(c)
+		if ok && access != nil && access.KnowledgeBase != nil {
+			role := types.TenantRoleFromContext(ctx)
+			uid, _ := types.UserIDFromContext(ctx)
+			isSourceTenant := access.KnowledgeBase.TenantID == access.CallerTenantID
+			isCreator := isSourceTenant &&
+				access.KnowledgeBase.CreatorID != "" &&
+				access.KnowledgeBase.CreatorID == uid
+			isVerifiedAdmin := isSourceTenant &&
+				role.HasPermission(types.TenantRoleAdmin) &&
+				types.IsTenantRoleVerifiedFromContext(ctx)
+			if isCreator || isVerifiedAdmin {
+				c.Next()
+				return
+			}
+		}
+		uid, _ := types.UserIDFromContext(ctx)
+		callerTenantID := uint64(0)
+		if access != nil {
+			callerTenantID = access.CallerTenantID
+		}
+		logger.Warnf(
+			ctx, "[rbac] chunk feedback reset denied: user=%s tenant=%d path=%s",
+			uid, callerTenantID, c.Request.URL.Path,
+		)
+		if svc := AuditServiceFromContext(c); svc != nil {
+			_ = svc.LogDenied(
+				ctx,
+				c,
+				callerTenantID,
+				uid,
+				string(types.TenantRoleFromContext(ctx)),
+				"kb_feedback_reset",
+			)
+		}
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": "Forbidden: only the knowledge base creator or workspace admin can reset feedback",
+		})
 		c.Abort()
 	}
 }

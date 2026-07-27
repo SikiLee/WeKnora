@@ -271,8 +271,10 @@ func (t *KnowledgeSearchTool) Execute(ctx context.Context, args json.RawMessage)
 
 	logger.Infof(
 		ctx,
-		"[Tool][KnowledgeSearch] Search params: top_k=%d, vector_threshold=%.2f, keyword_threshold=%.2f, min_score=%.2f",
+		"[Tool][KnowledgeSearch] Search params: top_k=%d, candidate_k=%d, "+
+			"vector_threshold=%.2f, keyword_threshold=%.2f, min_score=%.2f",
 		topK,
+		agentFeedbackCandidateK(topK),
 		vectorThreshold,
 		keywordThreshold,
 		minScore,
@@ -284,7 +286,7 @@ func (t *KnowledgeSearchTool) Execute(ctx context.Context, args json.RawMessage)
 	kbTypeMap := t.getKnowledgeBaseTypes(ctx, kbIDs)
 
 	allResults := t.concurrentSearchByTargets(ctx, queries, searchTargets,
-		topK, vectorThreshold, keywordThreshold, kbTypeMap)
+		agentFeedbackCandidateK(topK), vectorThreshold, keywordThreshold, kbTypeMap)
 	logger.Infof(ctx, "[Tool][KnowledgeSearch] Concurrent search completed: %d raw results", len(allResults))
 
 	// Note: HybridSearch now uses RRF (Reciprocal Rank Fusion) which produces normalized scores
@@ -403,6 +405,19 @@ func (t *KnowledgeSearchTool) Execute(ctx context.Context, args json.RawMessage)
 	}
 	logger.Infof(ctx, "[Tool][KnowledgeSearch] Output: %s", result.Output)
 	return result, nil
+}
+
+const agentFeedbackCandidateMultiplier = 3
+
+func agentFeedbackCandidateK(finalTopK int) int {
+	if finalTopK <= 0 {
+		return finalTopK
+	}
+	maxInt := int(^uint(0) >> 1)
+	if finalTopK > maxInt/agentFeedbackCandidateMultiplier {
+		return maxInt
+	}
+	return finalTopK * agentFeedbackCandidateMultiplier
 }
 
 // getKnowledgeBaseTypes fetches knowledge base types for the given IDs

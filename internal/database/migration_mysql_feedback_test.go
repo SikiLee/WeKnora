@@ -96,6 +96,14 @@ func TestMySQLFeedbackFreshSchemaAndLogOrdering(t *testing.T) {
 			)
 		}
 	}
+	for _, columnName := range []string{"actor_tenant_id", "actor_user_id"} {
+		require.True(
+			t,
+			mysqlColumnExists(t, db, databaseName, "chunk_feedback_weight_logs", columnName),
+			"chunk_feedback_weight_logs.%s",
+			columnName,
+		)
+	}
 
 	logs := []mysqlFeedbackLog{
 		{ID: "z-like", SourceAction: "like", OldWeight: 1.0, NewWeight: 1.2},
@@ -168,6 +176,25 @@ func mysqlDatetimePrecision(
 	`, databaseName, tableName, columnName).Scan(&precision))
 	require.True(t, precision.Valid, "%s.%s has no datetime precision", tableName, columnName)
 	return precision.Int64
+}
+
+func mysqlColumnExists(
+	t *testing.T,
+	db *sql.DB,
+	databaseName string,
+	tableName string,
+	columnName string,
+) bool {
+	t.Helper()
+	var count int
+	require.NoError(t, db.QueryRow(`
+		SELECT COUNT(*)
+		FROM information_schema.columns
+		WHERE table_schema = ?
+		  AND table_name = ?
+		  AND column_name = ?
+	`, databaseName, tableName, columnName).Scan(&count))
+	return count == 1
 }
 
 func loadMySQLFeedbackLogs(t *testing.T, db *sql.DB, limit, offset int) []mysqlFeedbackLog {

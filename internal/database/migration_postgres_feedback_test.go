@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/golang-migrate/migrate/v4"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/postgres"
@@ -51,6 +52,70 @@ func TestPostgresAnswerFeedbackMigrationUpDownUp(t *testing.T) {
 	assertPostgresFeedbackMigrationSchema(t, db, false)
 
 	require.NoError(t, db.Exec(up).Error)
+	assertPostgresFeedbackMigrationSchema(t, db, true)
+}
+
+func TestPostgresAnswerFeedbackFullMigrationFreshUpgradeDownUp(t *testing.T) {
+	adminDSN := strings.TrimSpace(os.Getenv("WEKNORA_TEST_POSTGRES_DSN"))
+	if adminDSN == "" {
+		t.Skip("WEKNORA_TEST_POSTGRES_DSN is not set")
+	}
+
+	admin, err := gorm.Open(postgres.Open(adminDSN), &gorm.Config{})
+	require.NoError(t, err)
+	adminSQL, err := admin.DB()
+	require.NoError(t, err)
+
+	databaseName := "feedback_full_migration_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	require.NoError(t, admin.Exec("CREATE DATABASE "+databaseName).Error)
+	t.Cleanup(func() {
+		require.NoError(t, admin.Exec("DROP DATABASE "+databaseName+" WITH (FORCE)").Error)
+		require.NoError(t, adminSQL.Close())
+	})
+
+	dsn := postgresMigrationDSNWithDatabase(t, adminDSN, databaseName)
+	_, currentFile, _, ok := runtime.Caller(0)
+	require.True(t, ok)
+	migrationsPath := filepath.ToSlash(filepath.Join(
+		filepath.Dir(currentFile),
+		"..",
+		"..",
+		"migrations",
+		"versioned",
+	))
+	m, err := migrate.New("file://"+migrationsPath, dsn)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		sourceErr, databaseErr := m.Close()
+		require.NoError(t, sourceErr)
+		require.NoError(t, databaseErr)
+	})
+
+	require.NoError(t, m.Up())
+	version, dirty, err := m.Version()
+	require.NoError(t, err)
+	require.Equal(t, uint(77), version)
+	require.False(t, dirty)
+
+	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
+	assertPostgresFeedbackMigrationSchema(t, db, true)
+
+	require.NoError(t, m.Steps(-1))
+	version, dirty, err = m.Version()
+	require.NoError(t, err)
+	require.Equal(t, uint(76), version)
+	require.False(t, dirty)
+	assertPostgresFeedbackMigrationSchema(t, db, false)
+
+	require.NoError(t, m.Steps(1))
+	version, dirty, err = m.Version()
+	require.NoError(t, err)
+	require.Equal(t, uint(77), version)
+	require.False(t, dirty)
 	assertPostgresFeedbackMigrationSchema(t, db, true)
 }
 
@@ -176,6 +241,18 @@ func postgresMigrationDSNWithSearchPath(t *testing.T, dsn, schema string) string
 	return strings.TrimSpace(dsn) + " search_path=" + schema
 }
 
+func postgresMigrationDSNWithDatabase(t *testing.T, dsn, databaseName string) string {
+	t.Helper()
+	if strings.Contains(dsn, "://") {
+		parsed, err := url.Parse(dsn)
+		require.NoError(t, err)
+		parsed.Path = "/" + databaseName
+		return parsed.String()
+	}
+	t.Fatalf("full PostgreSQL migration test requires a URL DSN")
+	return ""
+}
+
 func readFeedbackPostgresMigration(t *testing.T, direction string) string {
 	t.Helper()
 	_, currentFile, _, ok := runtime.Caller(0)
@@ -186,7 +263,7 @@ func readFeedbackPostgresMigration(t *testing.T, direction string) string {
 		"..",
 		"migrations",
 		"versioned",
-		"000070_answer_feedback."+direction+".sql",
+		"000077_answer_feedback."+direction+".sql",
 	)
 	content, err := os.ReadFile(path)
 	require.NoError(t, err)
@@ -211,6 +288,15 @@ func assertPostgresFeedbackMigrationSchema(t *testing.T, db *gorm.DB, wantPresen
 			postgresRelationExists(t, db, relation),
 			"relation %s",
 			relation,
+		)
+	}
+	for _, column := range []string{"actor_tenant_id", "actor_user_id"} {
+		require.Equal(
+			t,
+			wantPresent,
+			postgresColumnExists(t, db, "chunk_feedback_weight_logs", column),
+			"chunk_feedback_weight_logs.%s",
+			column,
 		)
 	}
 }

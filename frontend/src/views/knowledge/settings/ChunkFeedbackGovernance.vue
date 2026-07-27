@@ -89,7 +89,8 @@
             <strong>{{ selected.knowledge_title || t('feedback.governance.untitledKnowledge') }}</strong>
             <span>#{{ selected.chunk_index }}</span>
           </div>
-          <t-button theme="danger" variant="outline" size="small" @click="resetDialogVisible = true">
+          <t-button v-if="canReset" theme="danger" variant="outline" size="small"
+            @click="resetDialogVisible = true">
             <template #icon><t-icon name="refresh" /></template>
             {{ t('feedback.governance.reset') }}
           </t-button>
@@ -122,7 +123,7 @@
         <section class="detail-section">
           <h3>{{ t('feedback.governance.weightHistory') }}</h3>
           <t-table row-key="id" :data="logs" :columns="logColumns" :loading="logsLoading"
-            table-content-width="564px" size="small">
+            table-content-width="720px" size="small">
             <template #created_at="{ row }">{{ formatDate(row.created_at) }}</template>
             <template #change="{ row }"><code>{{ Number(row.old_weight).toFixed(2) }} -> {{ Number(row.new_weight).toFixed(2) }}</code></template>
             <template #source_action="{ row }">{{ actionLabel(row.source_action) }}</template>
@@ -137,7 +138,7 @@
     </t-drawer>
 
     <Teleport to="body">
-      <t-dialog v-model:visible="resetDialogVisible" :header="t('feedback.governance.resetTitle')"
+      <t-dialog v-if="canReset" v-model:visible="resetDialogVisible" :header="t('feedback.governance.resetTitle')"
         :confirm-btn="{ content: t('feedback.governance.confirmReset'), theme: 'danger', loading: resetting }"
         :cancel-btn="t('common.cancel')" width="min(460px, calc(100vw - 32px))" @confirm="confirmReset"
         @close="handleResetDialogClose">
@@ -157,7 +158,7 @@ import { MessagePlugin } from 'tdesign-vue-next'
 import { useI18n } from 'vue-i18n'
 import { useChunkFeedbackGovernance } from '@/composables/useChunkFeedbackGovernance'
 
-const props = defineProps<{ kbId: string }>()
+const props = defineProps<{ kbId: string; canReset?: boolean }>()
 const { t, locale } = useI18n()
 const resetDialogVisible = ref(false)
 const resetReason = ref('')
@@ -199,6 +200,7 @@ const logColumns = computed(() => [
   { colKey: 'created_at', title: t('feedback.governance.logColumns.time'), width: 164 },
   { colKey: 'change', title: t('feedback.governance.logColumns.change'), width: 130 },
   { colKey: 'source_action', title: t('feedback.governance.logColumns.action'), width: 110 },
+  { colKey: 'actor_user_id', title: t('feedback.governance.logColumns.operator'), width: 150, ellipsis: true },
   { colKey: 'reason', title: t('feedback.governance.logColumns.reason'), minWidth: 160, ellipsis: true },
 ])
 

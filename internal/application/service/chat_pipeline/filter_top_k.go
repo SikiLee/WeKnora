@@ -106,3 +106,24 @@ func sortSearchResultsDeterministically(results []*types.SearchResult) {
 		return left.ID < right.ID
 	})
 }
+
+// stableSortSearchResultsByScore restores score order while preserving the
+// existing order of equal-score results. Intermediate stages use this so a
+// feedback policy change does not disturb the upstream reranker ordering.
+func stableSortSearchResultsByScore(results []*types.SearchResult) {
+	sort.SliceStable(results, func(i, j int) bool {
+		left, right := results[i], results[j]
+		if left == nil || right == nil {
+			return left != nil
+		}
+		leftFinite := !math.IsNaN(left.Score) && !math.IsInf(left.Score, 0)
+		rightFinite := !math.IsNaN(right.Score) && !math.IsInf(right.Score, 0)
+		if leftFinite != rightFinite {
+			return leftFinite
+		}
+		if !leftFinite {
+			return false
+		}
+		return left.Score > right.Score
+	})
+}

@@ -6,6 +6,7 @@ import (
 	"math"
 	"strings"
 
+	"github.com/Tencent/WeKnora/internal/config"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
@@ -20,15 +21,20 @@ type chunkRecallWeightReader interface {
 // PluginFeedbackWeight applies persisted answer-feedback weights after all
 // reranking boosts and before chunks are merged or truncated.
 type PluginFeedbackWeight struct {
-	chunkRepo chunkRecallWeightReader
+	chunkRepo      chunkRecallWeightReader
+	feedbackConfig *types.ChunkFeedbackConfig
 }
 
 // NewPluginFeedbackWeight registers the recall-weight stage with the pipeline.
 func NewPluginFeedbackWeight(
 	eventManager *EventManager,
 	chunkRepo interfaces.ChunkRepository,
+	cfg *config.Config,
 ) *PluginFeedbackWeight {
 	plugin := &PluginFeedbackWeight{chunkRepo: chunkRepo}
+	if cfg != nil {
+		plugin.feedbackConfig = cfg.Feedback
+	}
 	eventManager.Register(plugin)
 	return plugin
 }
@@ -119,11 +125,16 @@ func (p *PluginFeedbackWeight) OnEvent(
 	}
 
 	weightByScope := make(map[string]float64, len(weights))
-	for _, weight := range weights {
-		if weight.RecallWeight <= 0 || math.IsNaN(weight.RecallWeight) || math.IsInf(weight.RecallWeight, 0) {
+	for _, aggregate := range weights {
+		weight := effectiveChunkRecallWeight(aggregate, p.feedbackConfig)
+		if weight <= 0 || math.IsNaN(weight) || math.IsInf(weight, 0) {
 			continue
 		}
-		weightByScope[feedbackWeightKey(weight.TenantID, weight.KnowledgeBaseID, weight.ChunkID)] = weight.RecallWeight
+		weightByScope[feedbackWeightKey(
+			aggregate.TenantID,
+			aggregate.KnowledgeBaseID,
+			aggregate.ChunkID,
+		)] = weight
 	}
 
 	for _, item := range candidates {
@@ -148,6 +159,21 @@ func (p *PluginFeedbackWeight) OnEvent(
 		"weighted_cnt":  len(weightByScope),
 	})
 	return finish()
+}
+
+func effectiveChunkRecallWeight(
+	aggregate interfaces.ChunkRecallWeight,
+	cfg *types.ChunkFeedbackConfig,
+) float64 {
+	if cfg == nil {
+		return aggregate.RecallWeight
+	}
+	_, weight, _ := types.CalculateChunkFeedback(
+		aggregate.LikeCount,
+		aggregate.DislikeCount,
+		cfg,
+	)
+	return weight
 }
 
 func finalizePendingRerankMMR(ctx context.Context, chatManage *types.ChatManage) {

@@ -54,6 +54,7 @@ type ChunkFeedbackConfig struct {
 	HighRateThreshold     float64 `yaml:"high_rate_threshold"     json:"high_rate_threshold"`
 	LowRateThreshold      float64 `yaml:"low_rate_threshold"      json:"low_rate_threshold"`
 	OptimizationThreshold float64 `yaml:"optimization_threshold" json:"optimization_threshold"`
+	MinimumSampleCount    int64   `yaml:"minimum_sample_count"    json:"minimum_sample_count"`
 	HighRecallWeight      float64 `yaml:"high_recall_weight"      json:"high_recall_weight"`
 	NormalRecallWeight    float64 `yaml:"normal_recall_weight"    json:"normal_recall_weight"`
 	LowRecallWeight       float64 `yaml:"low_recall_weight"       json:"low_recall_weight"`
@@ -65,6 +66,7 @@ func DefaultChunkFeedbackConfig() *ChunkFeedbackConfig {
 		HighRateThreshold:     0.80,
 		LowRateThreshold:      0.50,
 		OptimizationThreshold: 0.20,
+		MinimumSampleCount:    5,
 		HighRecallWeight:      1.20,
 		NormalRecallWeight:    1.00,
 		LowRecallWeight:       0.80,
@@ -89,6 +91,9 @@ func (c *ChunkFeedbackConfig) Validate() error {
 		return fmt.Errorf(
 			"feedback thresholds must satisfy high_rate_threshold > low_rate_threshold > optimization_threshold",
 		)
+	}
+	if c.MinimumSampleCount < 1 {
+		return fmt.Errorf("feedback minimum_sample_count must be at least 1")
 	}
 	if c.HighRecallWeight <= 0 || c.NormalRecallWeight <= 0 || c.LowRecallWeight <= 0 {
 		return fmt.Errorf("feedback recall weights must be positive")
@@ -121,6 +126,9 @@ func CalculateChunkFeedback(
 	rate := float64(likeCount) / float64(total)
 	positiveRate = &rate
 	recallWeight = cfg.NormalRecallWeight
+	if total < cfg.MinimumSampleCount {
+		return positiveRate, recallWeight, false
+	}
 	switch {
 	case rate >= cfg.HighRateThreshold:
 		recallWeight = cfg.HighRecallWeight
@@ -250,6 +258,8 @@ type ChunkFeedbackWeightLog struct {
 	SourceAction     string  `json:"source_action"      gorm:"type:varchar(64);not null"`
 	SourceMessageID  string  `json:"source_message_id"  gorm:"type:varchar(36);not null;default:''"`
 	SourceFeedbackID string  `json:"source_feedback_id" gorm:"type:varchar(36);not null;default:''"`
+	ActorTenantID    uint64  `json:"actor_tenant_id"    gorm:"not null;default:0"`
+	ActorUserID      string  `json:"actor_user_id"      gorm:"type:varchar(512);not null;default:''"`
 	Reason           string  `json:"reason"             gorm:"type:text;not null;default:''"`
 	CreatedAt        time.Time
 }
@@ -381,6 +391,8 @@ type ChunkFeedbackWeightLogItem struct {
 	SourceAction     string    `json:"source_action"`
 	SourceMessageID  string    `json:"source_message_id,omitempty"`
 	SourceFeedbackID string    `json:"source_feedback_id,omitempty"`
+	ActorTenantID    uint64    `json:"actor_tenant_id,omitempty"`
+	ActorUserID      string    `json:"actor_user_id,omitempty"`
 	Reason           string    `json:"reason,omitempty"`
 	CreatedAt        time.Time `json:"created_at"`
 }

@@ -19,12 +19,15 @@ type ChunkFeedbackWeightScope struct {
 	ChunkID         string
 }
 
-// ChunkRecallWeight is the retrieval weight stored for one chunk.
+// ChunkRecallWeight contains the aggregate inputs needed to derive the
+// effective retrieval weight from the current feedback policy.
 type ChunkRecallWeight struct {
 	TenantID        uint64  `gorm:"column:tenant_id"`
 	KnowledgeBaseID string  `gorm:"column:knowledge_base_id"`
 	ChunkID         string  `gorm:"column:chunk_id"`
 	RecallWeight    float64 `gorm:"column:recall_weight"`
+	LikeCount       int64   `gorm:"column:like_count"`
+	DislikeCount    int64   `gorm:"column:dislike_count"`
 }
 
 // ChunkRepository defines the interface for chunk repository operations
