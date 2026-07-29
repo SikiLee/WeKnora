@@ -113,6 +113,12 @@
                         </p>
                       </div>
 
+                      <div v-if="mode === 'edit' && canManageFeedback" class="form-item">
+                        <label class="form-label">{{ $t('feedback.retrievalWeightOptIn') }}</label>
+                        <p class="form-tip">{{ $t('feedback.retrievalWeightOptInDescription') }}</p>
+                        <t-switch v-model="formData.indexingStrategy.feedbackWeightEnabled" />
+                      </div>
+
                       <!-- Wiki 提取粒度 (仅当 Wiki 启用时显示) -->
                       <div v-if="!isFAQ && formData.indexingStrategy.wikiEnabled" class="form-item">
                         <label class="form-label">{{ $t('knowledgeEditor.wiki.extractionGranularityLabel') }}</label>
@@ -480,6 +486,7 @@ const authStore = useAuthStore()
 const chatResources = useChatResourcesStore()
 const editorResources = useEditorResourcesStore()
 const { t } = useI18n()
+const canManageFeedback = computed(() => authStore.hasRole('admin'))
 
 // Props
 const props = defineProps<{
@@ -784,6 +791,7 @@ const initFormData = (type: 'document' | 'faq' = 'document') => {
       keywordEnabled: true,
       wikiEnabled: false,
       graphEnabled: false,
+      feedbackWeightEnabled: false,
     },
     // Vector-store binding. Empty string means "use the env-configured
     // store"; create mode defaults to that, edit mode loads the
@@ -908,6 +916,7 @@ const loadKBData = async () => {
         keywordEnabled: kb.indexing_strategy?.keyword_enabled ?? true,
         wikiEnabled: kb.indexing_strategy?.wiki_enabled ?? false,
         graphEnabled: kb.indexing_strategy?.graph_enabled ?? false,
+        feedbackWeightEnabled: kb.indexing_strategy?.feedback_weight_enabled ?? false,
       },
       // Vector-store binding. vectorStoreId is editor-only state; it
       // is only included in the create request, never the update
@@ -1271,6 +1280,7 @@ const buildSubmitData = () => {
       keyword_enabled: formData.value.indexingStrategy?.keywordEnabled ?? true,
       wiki_enabled: formData.value.indexingStrategy?.wikiEnabled ?? false,
       graph_enabled: formData.value.indexingStrategy?.graphEnabled ?? false,
+      feedback_weight_enabled: formData.value.indexingStrategy?.feedbackWeightEnabled ?? false,
     }
   }
 
@@ -1363,12 +1373,13 @@ const doSubmit = async () => {
           extraction_instructions: formData.value.wikiConfig.extractionInstructions || '',
         }
       }
-      if (formData.value.type !== 'faq') {
+      if (formData.value.type !== 'faq' || canManageFeedback.value) {
         updateConfig.indexing_strategy = {
           vector_enabled: formData.value.indexingStrategy?.vectorEnabled ?? true,
           keyword_enabled: formData.value.indexingStrategy?.keywordEnabled ?? true,
           wiki_enabled: formData.value.indexingStrategy?.wikiEnabled ?? false,
           graph_enabled: formData.value.indexingStrategy?.graphEnabled ?? false,
+          feedback_weight_enabled: formData.value.indexingStrategy?.feedbackWeightEnabled ?? false,
         }
       }
       await updateKnowledgeBase(props.kbId, {
