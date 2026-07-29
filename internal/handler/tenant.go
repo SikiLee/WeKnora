@@ -1697,6 +1697,10 @@ func (h *TenantHandler) updateTenantRetrievalConfigInternal(c *gin.Context) {
 		c.Error(errors.NewBadRequestError("rerank_top_k must be between 0 and 200"))
 		return
 	}
+	if cfg.ChunkOptimizationThreshold < 0 || cfg.ChunkOptimizationThreshold > 1 {
+		c.Error(errors.NewBadRequestError("chunk_optimization_threshold must be between 0 and 1"))
+		return
+	}
 
 	tenant, _ := types.TenantInfoFromContext(ctx)
 	if tenant == nil {

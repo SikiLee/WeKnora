@@ -34,6 +34,7 @@ type chunkService struct {
 	ownership       retriever.TenantStoreOwnership
 	task            interfaces.TaskEnqueuer
 	spanTracker     SpanTracker
+	feedbackRepo    interfaces.FeedbackRepository
 }
 
 // NewChunkService creates a new chunk service
@@ -52,6 +53,7 @@ func NewChunkService(
 	ownership retriever.TenantStoreOwnership,
 	task interfaces.TaskEnqueuer,
 	spanTracker SpanTracker,
+	feedbackRepo interfaces.FeedbackRepository,
 ) interfaces.ChunkService {
 	return &chunkService{
 		chunkRepository: chunkRepository,
@@ -62,10 +64,22 @@ func NewChunkService(
 		ownership:       ownership,
 		task:            task,
 		spanTracker:     spanTracker,
+		feedbackRepo:    feedbackRepo,
 	}
 }
 
 const maxEditableChunkLength = 200000
+
+func (s *chunkService) hydrateChunkFeedback(ctx context.Context, chunks []*types.Chunk) error {
+	if s.feedbackRepo == nil {
+		return nil
+	}
+	threshold := (&types.RetrievalConfig{}).GetEffectiveChunkOptimizationThreshold()
+	if tenant, ok := types.TenantInfoFromContext(ctx); ok && tenant != nil {
+		threshold = tenant.RetrievalConfig.GetEffectiveChunkOptimizationThreshold()
+	}
+	return s.feedbackRepo.HydrateChunks(ctx, chunks, threshold)
+}
 
 // GetRepository gets the chunk repository
 // Parameters:
@@ -93,7 +107,6 @@ func (s *chunkService) CreateChunks(ctx context.Context, chunks []*types.Chunk) 
 		})
 		return err
 	}
-
 	logger.Infof(ctx, "Add %d chunks successfully", len(chunks))
 	return nil
 }
@@ -118,6 +131,9 @@ func (s *chunkService) GetChunkByID(ctx context.Context, id string) (*types.Chun
 		})
 		return nil, err
 	}
+	if err := s.hydrateChunkFeedback(ctx, []*types.Chunk{chunk}); err != nil {
+		return nil, err
+	}
 
 	logger.Info(ctx, "Chunk retrieved successfully")
 	return chunk, nil
@@ -133,6 +149,9 @@ func (s *chunkService) GetChunkByIDOnly(ctx context.Context, id string) (*types.
 			return nil, ErrChunkNotFound
 		}
 		logger.ErrorWithFields(ctx, err, map[string]interface{}{"chunk_id": id})
+		return nil, err
+	}
+	if err := s.hydrateChunkFeedback(ctx, []*types.Chunk{chunk}); err != nil {
 		return nil, err
 	}
 	return chunk, nil
@@ -160,6 +179,9 @@ func (s *chunkService) ListChunksByKnowledgeID(ctx context.Context, knowledgeID 
 			"knowledge_id": knowledgeID,
 			"tenant_id":    tenantID,
 		})
+		return nil, err
+	}
+	if err := s.hydrateChunkFeedback(ctx, chunks); err != nil {
 		return nil, err
 	}
 
@@ -199,6 +221,9 @@ func (s *chunkService) ListPagedChunksByKnowledgeID(ctx context.Context,
 			"knowledge_id": knowledgeID,
 			"tenant_id":    tenantID,
 		})
+		return nil, err
+	}
+	if err := s.hydrateChunkFeedback(ctx, chunks); err != nil {
 		return nil, err
 	}
 

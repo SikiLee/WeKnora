@@ -35,6 +35,16 @@ type RetrievalConfig struct {
 	RRFVectorWeight float64 `json:"rrf_vector_weight,omitempty"`
 	// RRFKeywordWeight is the keyword counterpart. Default: 0.3.
 	RRFKeywordWeight float64 `json:"rrf_keyword_weight,omitempty"`
+	// ChunkOptimizationThreshold flags chunks whose positive feedback rate is
+	// below this value. It affects admin presentation only, never ranking.
+	ChunkOptimizationThreshold float64 `json:"chunk_optimization_threshold,omitempty"`
+}
+
+func (c *RetrievalConfig) GetEffectiveChunkOptimizationThreshold() float64 {
+	if c == nil || c.ChunkOptimizationThreshold <= 0 || c.ChunkOptimizationThreshold > 1 {
+		return 0.5
+	}
+	return c.ChunkOptimizationThreshold
 }
 
 // GetEffectiveEmbeddingTopK returns EmbeddingTopK with a fallback default.

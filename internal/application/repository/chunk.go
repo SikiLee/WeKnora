@@ -303,11 +303,20 @@ func (r *chunkRepository) ListChunksByParentIDs(
 	return chunks, nil
 }
 
-// UpdateChunk updates a chunk using GORM Save, which updates ALL fields
-// except SeqID (auto-increment, must not be overwritten).
-// Make sure the chunk object is complete (e.g., fetched from DB) before calling this method.
+var chunkWritableFields = []string{
+	"TenantID", "KnowledgeID", "KnowledgeBaseID", "TagID",
+	"Content", "SourceContent", "ContentRevision", "IndexStatus", "LastEditorID",
+	"ChunkIndex", "IsEnabled", "Flags", "Status", "StartAt", "EndAt",
+	"PreChunkID", "NextChunkID", "ChunkType", "ParentChunkID",
+	"RelationChunks", "IndirectRelationChunks", "Metadata", "ContentHash",
+	"ImageInfo", "UpdatedAt", "ContextHeader",
+}
+
+// UpdateChunk updates ordinary chunk content through an explicit allowlist.
+// Feedback projection fields are intentionally absent: only FeedbackRepository
+// may write them, so a stale full Chunk object cannot roll aggregates back.
 func (r *chunkRepository) UpdateChunk(ctx context.Context, chunk *types.Chunk) error {
-	return r.db.WithContext(ctx).Omit("SeqID").Save(chunk).Error
+	return r.db.WithContext(ctx).Select(chunkWritableFields).Save(chunk).Error
 }
 
 func (r *chunkRepository) CreateChunkRevision(ctx context.Context, revision *types.ChunkRevision) error {
@@ -360,14 +369,14 @@ func (r *chunkRepository) GetChunkRevision(
 	return &item, err
 }
 
-// SaveChunks persists full chunk objects in a single transaction using GORM Save (UPDATE).
+// SaveChunks persists ordinary chunk fields without touching feedback projections.
 func (r *chunkRepository) SaveChunks(ctx context.Context, chunks []*types.Chunk) error {
 	if len(chunks) == 0 {
 		return nil
 	}
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		for _, chunk := range chunks {
-			if err := tx.Omit("SeqID").Save(chunk).Error; err != nil {
+			if err := tx.Select(chunkWritableFields).Save(chunk).Error; err != nil {
 				return err
 			}
 		}
