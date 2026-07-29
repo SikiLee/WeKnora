@@ -164,6 +164,17 @@ func TestCompletionExcludesWebOnlyReferences(t *testing.T) {
 	assert.True(t, errors.Is(err, ErrFeedbackNotEligible))
 }
 
+func TestHydrateChunksUsesPersistedAttributionTable(t *testing.T) {
+	repo, _, session, message, chunk := setupFeedbackTestRepository(t)
+	ctx := context.Background()
+	_, err := repo.CompleteAssistantMessageWithReferences(ctx, session.TenantID, message, feedbackReference(chunk))
+	require.NoError(t, err)
+
+	hydrated := *chunk
+	require.NoError(t, repo.HydrateChunks(ctx, []*types.Chunk{&hydrated}, 0.5))
+	assert.EqualValues(t, 1, hydrated.SessionCount)
+}
+
 func TestOrdinaryChunkSaveCannotOverwriteFeedbackProjection(t *testing.T) {
 	_, db, _, _, chunk := setupFeedbackTestRepository(t)
 	require.NoError(t, db.Model(&types.Chunk{}).Where("id = ?", chunk.ID).Updates(map[string]interface{}{

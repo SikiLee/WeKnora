@@ -11,7 +11,7 @@ func RegisterFeedbackRoutes(r *gin.RouterGroup, handler *handler.FeedbackHandler
 		return
 	}
 	// Policies are declared so the global API-key gate has a complete route
-	// map; the service still rejects all non-web-user principals.
+	// map; mutating service methods still reject non-web-user principals.
 	sessions := g.apiKeyGroup(r.Group("/sessions"), apiKeyFullAccess())
 	sessions.PUT("/:session_id/messages/:message_id/feedback", g.Viewer(), handler.PutMessageFeedback)
 

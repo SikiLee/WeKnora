@@ -267,7 +267,7 @@ func (r *feedbackRepository) HydrateChunks(
 	}
 	var stats []sessionStat
 	if err := r.db.WithContext(ctx).
-		Table("message_chunk_refs AS r").
+		Table("message_chunk_references AS r").
 		Select("r.chunk_tenant_id, r.chunk_id, COUNT(DISTINCT m.session_id) AS session_count").
 		Joins("JOIN messages AS m ON m.id = r.message_id AND m.deleted_at IS NULL").
 		Where("r.chunk_id IN ?", ids).
