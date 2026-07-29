@@ -94,6 +94,34 @@ func loadFeedbackChunk(t *testing.T, db *gorm.DB, id string) types.Chunk {
 	return chunk
 }
 
+func TestHydrateMessagesRequiresAnActiveChunkReference(t *testing.T) {
+	repo, db, session, message, chunk := setupFeedbackTestRepository(t)
+	ctx := context.Background()
+	_, err := repo.CompleteAssistantMessageWithReferences(
+		ctx, session.TenantID, message, feedbackReference(chunk),
+	)
+	require.NoError(t, err)
+	message.IsCompleted = true
+
+	require.NoError(t, repo.HydrateMessages(
+		ctx, session.TenantID, "viewer", []*types.Message{message},
+	))
+	assert.True(t, message.FeedbackEligible)
+
+	// Preserve the reference to reproduce a legacy dangling association.
+	require.NoError(t, db.Where("tenant_id = ? AND id = ?", chunk.TenantID, chunk.ID).
+		Delete(&types.Chunk{}).Error)
+	var referenceCount int64
+	require.NoError(t, db.Model(&types.MessageChunkReference{}).
+		Where("message_id = ?", message.ID).Count(&referenceCount).Error)
+	require.EqualValues(t, 1, referenceCount)
+
+	require.NoError(t, repo.HydrateMessages(
+		ctx, session.TenantID, "viewer", []*types.Message{message},
+	))
+	assert.False(t, message.FeedbackEligible)
+}
+
 func TestFeedbackLifecycleAndResetBaseline(t *testing.T) {
 	repo, db, session, message, chunk := setupFeedbackTestRepository(t)
 	ctx := context.Background()
