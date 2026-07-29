@@ -162,7 +162,10 @@ func resolveReferenceKeys(tx *gorm.DB, references types.References) ([]reference
 	}
 	sort.Strings(ids)
 	var chunks []types.Chunk
-	if err := tx.Where("id IN ?", ids).Find(&chunks).Error; err != nil {
+	if err := tx.Where("id IN ?", ids).
+		Order("id").
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Find(&chunks).Error; err != nil {
 		return nil, err
 	}
 	keys := make([]referenceKey, 0, len(chunks))
@@ -200,10 +203,14 @@ func (r *feedbackRepository) HydrateMessages(
 		MessageID string
 		Count     int64
 	}
-	if err := r.db.WithContext(ctx).Model(&types.MessageChunkReference{}).
-		Select("message_id, COUNT(*) AS count").
-		Where("message_tenant_id = ? AND message_id IN ?", tenantID, ids).
-		Group("message_id").Scan(&counts).Error; err != nil {
+	if err := r.db.WithContext(ctx).Table("message_chunk_references AS mcr").
+		Select("mcr.message_id, COUNT(*) AS count").
+		Joins(`JOIN chunks AS c
+			ON c.tenant_id = mcr.chunk_tenant_id
+			AND c.id = mcr.chunk_id
+			AND c.deleted_at IS NULL`).
+		Where("mcr.message_tenant_id = ? AND mcr.message_id IN ?", tenantID, ids).
+		Group("mcr.message_id").Scan(&counts).Error; err != nil {
 		return err
 	}
 	eligible := make(map[string]bool, len(counts))
