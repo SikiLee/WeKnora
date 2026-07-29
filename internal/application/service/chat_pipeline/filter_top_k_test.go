@@ -2,6 +2,7 @@ package chatpipeline
 
 import (
 	"context"
+	"math"
 	"testing"
 
 	"github.com/Tencent/WeKnora/internal/types"
@@ -57,6 +58,58 @@ func TestPluginFilterTopKUsesDeterministicTieBreakers(t *testing.T) {
 
 	require.Nil(t, err)
 	assert.Equal(t, []string{"chunk-c", "chunk-a", "chunk-b"}, searchResultIDs(chatManage.MergeResult))
+}
+
+func TestPluginFilterTopKDisabledPreservesLegacyOrder(t *testing.T) {
+	chatManage := &types.ChatManage{
+		PipelineRequest: types.PipelineRequest{RerankTopK: 2},
+		PipelineState: types.PipelineState{
+			MergeResult: []*types.SearchResult{
+				{ID: "neutral", KnowledgeID: "doc-a", Score: 0.90, RecallWeight: 1},
+				{ID: "promoted", KnowledgeID: "doc-b", Score: 0.80, RecallWeight: 1.2},
+				{ID: "demoted", KnowledgeID: "doc-c", Score: 0.95, RecallWeight: 0.8},
+			},
+		},
+	}
+
+	err := (&PluginFilterTopK{}).OnEvent(
+		context.Background(), types.FILTER_TOP_K, chatManage,
+		func() *PluginError { return nil },
+	)
+
+	require.Nil(t, err)
+	assert.Equal(t, []string{"demoted", "neutral"}, searchResultIDs(chatManage.MergeResult))
+	assert.Equal(t, 0.95, chatManage.MergeResult[0].Score)
+}
+
+func TestPluginFilterTopKEnabledAppliesRecallWeightAtFinalCutoff(t *testing.T) {
+	chatManage := &types.ChatManage{
+		PipelineRequest: types.PipelineRequest{RerankTopK: 2},
+		PipelineState: types.PipelineState{
+			MergeResult: []*types.SearchResult{
+				{ID: "neutral", KnowledgeID: "doc-a", Score: 0.90, RecallWeight: 1},
+				{ID: "promoted", KnowledgeID: "doc-b", Score: 0.80, RecallWeight: 1.2},
+				{ID: "demoted", KnowledgeID: "doc-c", Score: 0.95, RecallWeight: 0.8},
+			},
+		},
+	}
+
+	err := (&PluginFilterTopK{retrievalWeightEnabled: true}).OnEvent(
+		context.Background(), types.FILTER_TOP_K, chatManage,
+		func() *PluginError { return nil },
+	)
+
+	require.Nil(t, err)
+	assert.Equal(t, []string{"promoted", "neutral"}, searchResultIDs(chatManage.MergeResult))
+	assert.Equal(t, 0.80, chatManage.MergeResult[0].Score, "raw score must remain observable")
+}
+
+func TestNormalizedRecallWeightTreatsMissingAndInvalidValuesAsNeutral(t *testing.T) {
+	for _, weight := range []float64{0, -1, 0.79, 1.21, math.NaN(), math.Inf(1)} {
+		assert.Equal(t, 1.0, normalizedRecallWeight(weight))
+	}
+	assert.Equal(t, 0.8, normalizedRecallWeight(0.8))
+	assert.Equal(t, 1.2, normalizedRecallWeight(1.2))
 }
 
 func searchResultIDs(results []*types.SearchResult) []string {
