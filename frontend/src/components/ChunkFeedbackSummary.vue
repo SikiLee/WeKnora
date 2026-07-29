@@ -31,7 +31,8 @@
           </div>
           <div v-if="details?.audits?.length" class="chunk-feedback-detail__audits">
             <div v-for="audit in details.audits.slice(0, 5)" :key="audit.id">
-              {{ audit.action }} · {{ audit.old_weight }} → {{ audit.new_weight }}
+              {{ audit.action }} · {{ t(`feedback.sources.${audit.trigger_source || 'legacy'}`) }}
+              · {{ audit.old_weight }} → {{ audit.new_weight }}
             </div>
           </div>
         </template>
@@ -55,6 +56,7 @@ import { computed, ref } from 'vue';
 import { MessagePlugin } from 'tdesign-vue-next';
 import { useI18n } from 'vue-i18n';
 import { getChunkFeedbackDetails, resetChunkFeedback } from '@/api/knowledge-base';
+import type { ChunkFeedbackDetails } from '@/api/knowledge-base';
 
 const props = defineProps<{
   chunk: Record<string, any>;
@@ -66,7 +68,7 @@ const { t } = useI18n();
 const visible = ref(false);
 const loading = ref(false);
 const resetting = ref(false);
-const details = ref<any>(null);
+const details = ref<ChunkFeedbackDetails | null>(null);
 const reasons = ['inaccurate', 'irrelevant', 'incomplete', 'outdated', 'other'];
 let loadSequence = 0;
 
@@ -81,7 +83,7 @@ const setVisible = async (next: boolean) => {
   const sequence = ++loadSequence;
   loading.value = true;
   try {
-    const response: any = await getChunkFeedbackDetails(props.chunk.id);
+    const response = await getChunkFeedbackDetails(props.chunk.id);
     if (sequence === loadSequence) details.value = response?.data || {};
   } catch {
     if (sequence === loadSequence) MessagePlugin.error(t('feedback.loadFailed'));

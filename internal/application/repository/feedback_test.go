@@ -22,18 +22,45 @@ func setupFeedbackTestRepository(t *testing.T) (*feedbackRepository, *gorm.DB, *
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)
+	require.NoError(t, db.Exec(`
+		CREATE TABLE sessions (
+			id text PRIMARY KEY,
+			tenant_id integer NOT NULL,
+			user_id text NOT NULL,
+			deleted_at datetime
+		);
+		CREATE TABLE messages (
+			id text PRIMARY KEY,
+			session_id text NOT NULL,
+			content text,
+			role text,
+			knowledge_references json,
+			agent_steps json,
+			is_completed numeric NOT NULL DEFAULT 0,
+			is_fallback numeric NOT NULL DEFAULT 0,
+			created_at datetime,
+			updated_at datetime,
+			deleted_at datetime
+		);
+	`).Error)
 	require.NoError(t, db.AutoMigrate(
-		&types.Session{},
-		&types.Message{},
 		&types.Chunk{},
 		&types.MessageChunkReference{},
 		&types.MessageFeedback{},
 		&types.ChunkFeedbackAudit{},
 	))
-	session := &types.Session{TenantID: 101, UserID: "user-a"}
-	require.NoError(t, db.Create(session).Error)
-	message := &types.Message{SessionID: session.ID, Role: "assistant", Content: "draft"}
-	require.NoError(t, db.Create(message).Error)
+	session := &types.Session{ID: "session-a", TenantID: 101}
+	require.NoError(t, db.Exec(
+		"INSERT INTO sessions (id, tenant_id, user_id) VALUES (?, ?, ?)",
+		session.ID, session.TenantID, session.UserID,
+	).Error)
+	message := &types.Message{
+		ID: "message-a", SessionID: session.ID, Role: "assistant", Content: "draft",
+	}
+	require.NoError(t, db.Exec(
+		"INSERT INTO messages (id, session_id, content, role, is_completed) VALUES (?, ?, ?, ?, ?)",
+		message.ID, message.SessionID, message.Content, message.Role, false,
+	).Error)
 	chunk := &types.Chunk{
 		ID: "chunk-a", TenantID: 202, KnowledgeBaseID: "kb-a", KnowledgeID: "knowledge-a",
 		Content: "source", SourceContent: "source", RecallWeight: 1, IsEnabled: true,
@@ -46,6 +73,16 @@ func feedbackReference(chunk *types.Chunk) types.References {
 	return types.References{&types.SearchResult{
 		ID: chunk.ID, KnowledgeBaseID: chunk.KnowledgeBaseID, ChunkType: types.ChunkTypeText,
 	}}
+}
+
+func feedbackReferences(chunks ...*types.Chunk) types.References {
+	references := make(types.References, 0, len(chunks))
+	for _, chunk := range chunks {
+		references = append(references, &types.SearchResult{
+			ID: chunk.ID, KnowledgeBaseID: chunk.KnowledgeBaseID, ChunkType: types.ChunkTypeText,
+		})
+	}
+	return references
 }
 
 func loadFeedbackChunk(t *testing.T, db *gorm.DB, id string) types.Chunk {
@@ -118,6 +155,9 @@ func TestFeedbackLifecycleAndResetBaseline(t *testing.T) {
 	assert.Zero(t, got.LikeCount)
 	assert.Zero(t, got.DislikeCount)
 	assert.Equal(t, 1.0, got.RecallWeight)
+	var deleteAudit types.ChunkFeedbackAudit
+	require.NoError(t, db.Order("id DESC").First(&deleteAudit).Error)
+	assert.Equal(t, types.FeedbackTriggerContentDelete, deleteAudit.TriggerSource)
 }
 
 func TestFeedbackTransactionRollsBackOnAuditFailure(t *testing.T) {
@@ -143,6 +183,73 @@ func TestFeedbackTransactionRollsBackOnAuditFailure(t *testing.T) {
 	got := loadFeedbackChunk(t, db, chunk.ID)
 	assert.Zero(t, got.LikeCount)
 	assert.Equal(t, 1.0, got.RecallWeight)
+}
+
+func TestFeedbackAuditTriggerSourcesAndIdempotency(t *testing.T) {
+	repo, db, session, message, chunk := setupFeedbackTestRepository(t)
+	ctx := context.Background()
+	_, err := repo.CompleteAssistantMessageWithReferences(ctx, session.TenantID, message, feedbackReference(chunk))
+	require.NoError(t, err)
+
+	apply := func(feedbackType types.FeedbackType) {
+		t.Helper()
+		_, applyErr := repo.ApplyMessageFeedback(ctx, types.ApplyMessageFeedbackInput{
+			MessageTenantID: session.TenantID, ActorTenantID: session.TenantID,
+			ActorUserID: "user-a", SessionID: session.ID, MessageID: message.ID, Type: feedbackType,
+		})
+		require.NoError(t, applyErr)
+	}
+	auditSources := func() []types.FeedbackTriggerSource {
+		t.Helper()
+		var audits []types.ChunkFeedbackAudit
+		require.NoError(t, db.Order("id").Find(&audits).Error)
+		sources := make([]types.FeedbackTriggerSource, 0, len(audits))
+		for _, audit := range audits {
+			sources = append(sources, audit.TriggerSource)
+		}
+		return sources
+	}
+
+	apply(types.FeedbackTypeLike)
+	assert.Equal(t, []types.FeedbackTriggerSource{types.FeedbackTriggerLike}, auditSources())
+
+	apply(types.FeedbackTypeLike)
+	assert.Equal(t, []types.FeedbackTriggerSource{types.FeedbackTriggerLike}, auditSources(),
+		"idempotent feedback must not create another weight-change audit")
+
+	apply(types.FeedbackTypeDislike)
+	apply(types.FeedbackTypeNone)
+	require.NoError(t, repo.ResetChunkFeedback(ctx, types.ResetChunkFeedbackInput{
+		ChunkTenantID: chunk.TenantID, ActorTenantID: session.TenantID,
+		ActorUserID: "admin", KnowledgeBaseID: chunk.KnowledgeBaseID, ChunkID: chunk.ID,
+	}))
+	assert.Equal(t, []types.FeedbackTriggerSource{
+		types.FeedbackTriggerLike,
+		types.FeedbackTriggerDislike,
+		types.FeedbackTriggerCancel,
+		types.FeedbackTriggerAdminReset,
+	}, auditSources())
+	var audits []types.ChunkFeedbackAudit
+	require.NoError(t, db.Order("id").Find(&audits).Error)
+	require.Len(t, audits, 4)
+	for _, audit := range audits[:3] {
+		assert.Equal(t, types.ChunkFeedbackAuditActionWeightChanged, audit.Action)
+	}
+	assert.Equal(t, types.ChunkFeedbackAuditActionReset, audits[3].Action)
+}
+
+func TestFeedbackAuditTriggerSourceDefaultsToLegacy(t *testing.T) {
+	_, db, _, _, chunk := setupFeedbackTestRepository(t)
+	require.NoError(t, db.Exec(`
+		INSERT INTO chunk_feedback_audits
+			(chunk_tenant_id, chunk_id, actor_tenant_id, actor_user_id, action, old_weight, new_weight, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+	`, chunk.TenantID, chunk.ID, uint64(101), "legacy-user",
+		types.ChunkFeedbackAuditActionWeightChanged, 1.0, 1.2).Error)
+
+	var audit types.ChunkFeedbackAudit
+	require.NoError(t, db.Last(&audit).Error)
+	assert.Equal(t, types.FeedbackTriggerLegacy, audit.TriggerSource)
 }
 
 func TestCompletionExcludesWebOnlyReferences(t *testing.T) {
@@ -173,6 +280,244 @@ func TestHydrateChunksUsesPersistedAttributionTable(t *testing.T) {
 	hydrated := *chunk
 	require.NoError(t, repo.HydrateChunks(ctx, []*types.Chunk{&hydrated}, 0.5))
 	assert.EqualValues(t, 1, hydrated.SessionCount)
+}
+
+func TestDeletingOneOfThreeReferencesStillAllowsLike(t *testing.T) {
+	repo, db, session, message, chunkA := setupFeedbackTestRepository(t)
+	ctx := context.Background()
+	chunkB := &types.Chunk{
+		ID: "chunk-b", TenantID: chunkA.TenantID, KnowledgeBaseID: chunkA.KnowledgeBaseID,
+		KnowledgeID: chunkA.KnowledgeID, Content: "b", SourceContent: "b",
+		RecallWeight: 1, IsEnabled: true,
+	}
+	chunkC := &types.Chunk{
+		ID: "chunk-c", TenantID: chunkA.TenantID, KnowledgeBaseID: chunkA.KnowledgeBaseID,
+		KnowledgeID: chunkA.KnowledgeID, Content: "c", SourceContent: "c",
+		RecallWeight: 1, IsEnabled: true,
+	}
+	require.NoError(t, db.Create([]*types.Chunk{chunkB, chunkC}).Error)
+	_, err := repo.CompleteAssistantMessageWithReferences(
+		ctx, session.TenantID, message, feedbackReferences(chunkA, chunkB, chunkC),
+	)
+	require.NoError(t, err)
+	require.NoError(t, (&chunkRepository{db: db}).DeleteChunk(ctx, chunkB.TenantID, chunkB.ID))
+
+	_, err = repo.ApplyMessageFeedback(ctx, types.ApplyMessageFeedbackInput{
+		MessageTenantID: session.TenantID, ActorTenantID: session.TenantID,
+		ActorUserID: "user-a", SessionID: session.ID, MessageID: message.ID, Type: types.FeedbackTypeLike,
+	})
+	require.NoError(t, err)
+	for _, id := range []string{chunkA.ID, chunkC.ID} {
+		got := loadFeedbackChunk(t, db, id)
+		assert.EqualValues(t, 1, got.LikeCount)
+		assert.Equal(t, 1.2, got.RecallWeight)
+	}
+
+	var referenceCount int64
+	require.NoError(t, db.Model(&types.MessageChunkReference{}).
+		Where("message_id = ?", message.ID).Count(&referenceCount).Error)
+	assert.EqualValues(t, 2, referenceCount)
+	var deleted types.Chunk
+	require.NoError(t, db.Unscoped().First(&deleted, "id = ?", chunkB.ID).Error)
+	assert.True(t, deleted.DeletedAt.Valid)
+	assert.Zero(t, deleted.LikeCount)
+}
+
+func TestDeletedReferencedChunkDoesNotBlockRemainingFeedback(t *testing.T) {
+	repo, db, session, message, chunkA := setupFeedbackTestRepository(t)
+	ctx := context.Background()
+	chunkB := &types.Chunk{
+		ID: "chunk-b", TenantID: chunkA.TenantID, KnowledgeBaseID: chunkA.KnowledgeBaseID,
+		KnowledgeID: chunkA.KnowledgeID, Content: "b", SourceContent: "b",
+		RecallWeight: 1, IsEnabled: true,
+	}
+	chunkC := &types.Chunk{
+		ID: "chunk-c", TenantID: chunkA.TenantID, KnowledgeBaseID: chunkA.KnowledgeBaseID,
+		KnowledgeID: chunkA.KnowledgeID, Content: "c", SourceContent: "c",
+		RecallWeight: 1, IsEnabled: true,
+	}
+	require.NoError(t, db.Create([]*types.Chunk{chunkB, chunkC}).Error)
+	_, err := repo.CompleteAssistantMessageWithReferences(
+		ctx, session.TenantID, message, feedbackReferences(chunkA, chunkB, chunkC),
+	)
+	require.NoError(t, err)
+
+	apply := func(feedbackType types.FeedbackType) {
+		t.Helper()
+		_, applyErr := repo.ApplyMessageFeedback(ctx, types.ApplyMessageFeedbackInput{
+			MessageTenantID: session.TenantID, ActorTenantID: session.TenantID,
+			ActorUserID: "user-a", SessionID: session.ID, MessageID: message.ID, Type: feedbackType,
+		})
+		require.NoError(t, applyErr)
+	}
+	apply(types.FeedbackTypeLike)
+	for _, id := range []string{chunkA.ID, chunkB.ID, chunkC.ID} {
+		got := loadFeedbackChunk(t, db, id)
+		assert.EqualValues(t, 1, got.LikeCount)
+		assert.Zero(t, got.DislikeCount)
+	}
+
+	chunkRepo := &chunkRepository{db: db}
+	require.NoError(t, chunkRepo.DeleteChunk(ctx, chunkB.TenantID, chunkB.ID))
+
+	var deletedRefCount int64
+	require.NoError(t, db.Model(&types.MessageChunkReference{}).
+		Where("chunk_id = ?", chunkB.ID).Count(&deletedRefCount).Error)
+	assert.Zero(t, deletedRefCount)
+
+	apply(types.FeedbackTypeDislike)
+	for _, id := range []string{chunkA.ID, chunkC.ID} {
+		got := loadFeedbackChunk(t, db, id)
+		assert.Zero(t, got.LikeCount)
+		assert.EqualValues(t, 1, got.DislikeCount)
+		assert.Equal(t, 0.8, got.RecallWeight)
+	}
+
+	apply(types.FeedbackTypeNone)
+	for _, id := range []string{chunkA.ID, chunkC.ID} {
+		got := loadFeedbackChunk(t, db, id)
+		assert.Zero(t, got.LikeCount)
+		assert.Zero(t, got.DislikeCount)
+		assert.Equal(t, 1.0, got.RecallWeight)
+	}
+
+	var deleted types.Chunk
+	require.NoError(t, db.Unscoped().First(&deleted, "id = ?", chunkB.ID).Error)
+	assert.True(t, deleted.DeletedAt.Valid)
+	assert.EqualValues(t, 1, deleted.LikeCount, "a deleted chunk must never be restored or recomputed")
+	assert.Zero(t, deleted.DislikeCount)
+	assert.Equal(t, 1.2, deleted.RecallWeight)
+}
+
+func TestLegacyMissingReferenceDoesNotBlockRemainingFeedback(t *testing.T) {
+	repo, db, session, message, chunkA := setupFeedbackTestRepository(t)
+	ctx := context.Background()
+	chunkB := &types.Chunk{
+		ID: "chunk-b", TenantID: chunkA.TenantID, KnowledgeBaseID: chunkA.KnowledgeBaseID,
+		KnowledgeID: chunkA.KnowledgeID, Content: "b", SourceContent: "b",
+		RecallWeight: 1, IsEnabled: true,
+	}
+	require.NoError(t, db.Create(chunkB).Error)
+	_, err := repo.CompleteAssistantMessageWithReferences(
+		ctx, session.TenantID, message, feedbackReferences(chunkA, chunkB),
+	)
+	require.NoError(t, err)
+
+	// Simulate a pre-fix soft delete that left its attribution row behind.
+	require.NoError(t, db.Where("tenant_id = ? AND id = ?", chunkB.TenantID, chunkB.ID).
+		Delete(&types.Chunk{}).Error)
+
+	_, err = repo.ApplyMessageFeedback(ctx, types.ApplyMessageFeedbackInput{
+		MessageTenantID: session.TenantID, ActorTenantID: session.TenantID,
+		ActorUserID: "user-a", SessionID: session.ID, MessageID: message.ID, Type: types.FeedbackTypeLike,
+	})
+	require.NoError(t, err)
+
+	got := loadFeedbackChunk(t, db, chunkA.ID)
+	assert.EqualValues(t, 1, got.LikeCount)
+	var staleCount int64
+	require.NoError(t, db.Model(&types.MessageChunkReference{}).
+		Where("chunk_id = ?", chunkB.ID).Count(&staleCount).Error)
+	assert.Zero(t, staleCount)
+}
+
+func TestAllLegacyReferencedChunksMissingReturnsBusinessErrorAndCleansReferences(t *testing.T) {
+	repo, db, session, message, chunk := setupFeedbackTestRepository(t)
+	ctx := context.Background()
+	_, err := repo.CompleteAssistantMessageWithReferences(ctx, session.TenantID, message, feedbackReference(chunk))
+	require.NoError(t, err)
+	// Simulate a pre-fix soft delete that left its attribution row behind.
+	require.NoError(t, db.Where("tenant_id = ? AND id = ?", chunk.TenantID, chunk.ID).
+		Delete(&types.Chunk{}).Error)
+
+	_, err = repo.ApplyMessageFeedback(ctx, types.ApplyMessageFeedbackInput{
+		MessageTenantID: session.TenantID, ActorTenantID: session.TenantID,
+		ActorUserID: "user-a", SessionID: session.ID, MessageID: message.ID, Type: types.FeedbackTypeLike,
+	})
+	assert.ErrorIs(t, err, ErrFeedbackNotEligible)
+
+	var feedbackCount, referenceCount, auditCount int64
+	require.NoError(t, db.Model(&types.MessageFeedback{}).Count(&feedbackCount).Error)
+	require.NoError(t, db.Model(&types.MessageChunkReference{}).Count(&referenceCount).Error)
+	require.NoError(t, db.Model(&types.ChunkFeedbackAudit{}).Count(&auditCount).Error)
+	assert.Zero(t, feedbackCount)
+	assert.Zero(t, referenceCount)
+	assert.Zero(t, auditCount)
+}
+
+func TestLegacyReferenceCleanupDatabaseErrorIsNotBusinessError(t *testing.T) {
+	repo, db, session, message, chunk := setupFeedbackTestRepository(t)
+	ctx := context.Background()
+	_, err := repo.CompleteAssistantMessageWithReferences(ctx, session.TenantID, message, feedbackReference(chunk))
+	require.NoError(t, err)
+	require.NoError(t, db.Where("tenant_id = ? AND id = ?", chunk.TenantID, chunk.ID).
+		Delete(&types.Chunk{}).Error)
+	require.NoError(t, db.Exec(`
+		CREATE TRIGGER reject_legacy_reference_cleanup
+		BEFORE DELETE ON message_chunk_references
+		BEGIN SELECT RAISE(ABORT, 'legacy reference cleanup failure'); END;
+	`).Error)
+
+	_, err = repo.ApplyMessageFeedback(ctx, types.ApplyMessageFeedbackInput{
+		MessageTenantID: session.TenantID, ActorTenantID: session.TenantID,
+		ActorUserID: "user-a", SessionID: session.ID, MessageID: message.ID, Type: types.FeedbackTypeLike,
+	})
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, ErrFeedbackNotEligible)
+
+	var feedbackCount, referenceCount int64
+	require.NoError(t, db.Model(&types.MessageFeedback{}).Count(&feedbackCount).Error)
+	require.NoError(t, db.Model(&types.MessageChunkReference{}).Count(&referenceCount).Error)
+	assert.Zero(t, feedbackCount)
+	assert.EqualValues(t, 1, referenceCount)
+}
+
+func TestChunkDeleteRollsBackWhenReferenceCleanupFails(t *testing.T) {
+	repo, db, session, message, chunk := setupFeedbackTestRepository(t)
+	ctx := context.Background()
+	_, err := repo.CompleteAssistantMessageWithReferences(ctx, session.TenantID, message, feedbackReference(chunk))
+	require.NoError(t, err)
+	require.NoError(t, db.Exec(`
+		CREATE TRIGGER reject_reference_cleanup
+		BEFORE DELETE ON message_chunk_references
+		BEGIN SELECT RAISE(ABORT, 'reference cleanup failure'); END;
+	`).Error)
+
+	err = (&chunkRepository{db: db}).DeleteChunk(ctx, chunk.TenantID, chunk.ID)
+	require.Error(t, err)
+
+	var activeCount, referenceCount int64
+	require.NoError(t, db.Model(&types.Chunk{}).Where("id = ?", chunk.ID).Count(&activeCount).Error)
+	require.NoError(t, db.Model(&types.MessageChunkReference{}).
+		Where("chunk_id = ?", chunk.ID).Count(&referenceCount).Error)
+	assert.EqualValues(t, 1, activeCount)
+	assert.EqualValues(t, 1, referenceCount)
+}
+
+func TestRepeatedBatchChunkDeleteIsIdempotent(t *testing.T) {
+	repo, db, session, message, chunkA := setupFeedbackTestRepository(t)
+	ctx := context.Background()
+	chunkB := &types.Chunk{
+		ID: "chunk-b", TenantID: chunkA.TenantID, KnowledgeBaseID: chunkA.KnowledgeBaseID,
+		KnowledgeID: chunkA.KnowledgeID, Content: "b", SourceContent: "b",
+		RecallWeight: 1, IsEnabled: true,
+	}
+	require.NoError(t, db.Create(chunkB).Error)
+	_, err := repo.CompleteAssistantMessageWithReferences(
+		ctx, session.TenantID, message, feedbackReferences(chunkA, chunkB),
+	)
+	require.NoError(t, err)
+
+	chunkRepo := &chunkRepository{db: db}
+	require.NoError(t, chunkRepo.DeleteChunks(ctx, chunkA.TenantID, []string{chunkB.ID, chunkB.ID}))
+	require.NoError(t, chunkRepo.DeleteChunks(ctx, chunkA.TenantID, []string{chunkB.ID}))
+
+	var activeCount, referenceCount int64
+	require.NoError(t, db.Model(&types.Chunk{}).Where("id = ?", chunkB.ID).Count(&activeCount).Error)
+	require.NoError(t, db.Model(&types.MessageChunkReference{}).
+		Where("chunk_id = ?", chunkB.ID).Count(&referenceCount).Error)
+	assert.Zero(t, activeCount)
+	assert.Zero(t, referenceCount)
 }
 
 func TestOrdinaryChunkSaveCannotOverwriteFeedbackProjection(t *testing.T) {

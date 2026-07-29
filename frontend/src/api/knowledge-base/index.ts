@@ -367,8 +367,30 @@ export function getChunkByIdOnly(chunkId: string) {
   return get(`/api/v1/chunks/by-id/${chunkId}`);
 }
 
+export type ChunkFeedbackTriggerSource =
+  | 'like'
+  | 'dislike'
+  | 'cancel'
+  | 'admin_reset'
+  | 'content_delete'
+  | 'legacy';
+
+export interface ChunkFeedbackAudit {
+  id: number;
+  action: 'feedback_weight_changed' | 'feedback_reset';
+  trigger_source: ChunkFeedbackTriggerSource;
+  old_weight: number;
+  new_weight: number;
+  created_at: string;
+}
+
+export interface ChunkFeedbackDetails {
+  reason_counts: Record<string, number>;
+  audits: ChunkFeedbackAudit[];
+}
+
 export function getChunkFeedbackDetails(chunkId: string) {
-  return get(`/api/v1/chunks/by-id/${chunkId}/feedback`);
+  return get<{ success: boolean; data: ChunkFeedbackDetails }>(`/api/v1/chunks/by-id/${chunkId}/feedback`);
 }
 
 export function resetChunkFeedback(knowledgeBaseId: string, chunkId: string) {

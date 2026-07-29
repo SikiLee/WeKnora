@@ -55,7 +55,7 @@ func (p *PluginMerge) mergeSequentialChunks(
 
 		// Keep the higher score
 		if current.Score > lastChunk.Score {
-			lastChunk.Score = current.Score
+			adoptScoreProvenance(lastChunk, current)
 		}
 	}
 
@@ -70,6 +70,24 @@ func (p *PluginMerge) mergeSequentialChunks(
 	})
 
 	return merged
+}
+
+// adoptScoreProvenance keeps the raw relevance score and the feedback weight
+// that belongs to that score source together. Merge representatives retain
+// their identity/content fields, while score-derived fields follow the winner.
+func adoptScoreProvenance(target, source *types.SearchResult) {
+	target.Score = source.Score
+	target.RecallWeight = source.RecallWeight
+	target.MatchType = source.MatchType
+	target.MatchedContent = source.MatchedContent
+	if source.Metadata == nil {
+		target.Metadata = nil
+		return
+	}
+	target.Metadata = make(map[string]string, len(source.Metadata))
+	for key, value := range source.Metadata {
+		target.Metadata[key] = value
+	}
 }
 
 // mergeImageInfo merges ImageInfo from source into target, deduplicating by URL.

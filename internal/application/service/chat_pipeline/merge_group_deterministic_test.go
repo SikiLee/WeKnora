@@ -118,3 +118,75 @@ func TestGroupAndMergeOverlapping_CrossKnowledgePreservesMergeLogic(t *testing.T
 	assert.Equal(t, "a-1", results[0].ID, "higher score from kb-a first")
 	assert.Equal(t, "b-1", results[1].ID, "lower score from kb-b second")
 }
+
+func TestMergeSequentialChunksKeepsScoreProvenance(t *testing.T) {
+	plugin := &PluginMerge{}
+	chunks := []*types.SearchResult{
+		{
+			ID: "a", KnowledgeID: "doc", ChunkType: "text", ChunkIndex: 1,
+			Content: "first", Score: 0.70, RecallWeight: 1.20,
+			MatchType: types.MatchTypeEmbedding, MatchedContent: "match-a",
+			Metadata: map[string]string{"model_score": "0.70"},
+		},
+		{
+			ID: "b", KnowledgeID: "doc", ChunkType: "text", ChunkIndex: 2,
+			Content: "second", Score: 0.90, RecallWeight: 0.80,
+			MatchType: types.MatchTypeKeywords, MatchedContent: "match-b",
+			Metadata: map[string]string{"model_score": "0.90"},
+		},
+	}
+
+	results := plugin.groupAndMergeCurrentContent(context.Background(), chunks)
+	require.Len(t, results, 1)
+	assert.Equal(t, 0.90, results[0].Score)
+	assert.Equal(t, 0.80, results[0].RecallWeight)
+	assert.Equal(t, types.MatchTypeKeywords, results[0].MatchType)
+	assert.Equal(t, "match-b", results[0].MatchedContent)
+	assert.Equal(t, "0.90", results[0].Metadata["model_score"])
+	assert.InDelta(t, 0.72, results[0].Score*normalizedRecallWeight(results[0].RecallWeight), 1e-9)
+}
+
+func TestMergeSequentialChunksEqualScoreKeepsStableRepresentative(t *testing.T) {
+	plugin := &PluginMerge{}
+	for range 20 {
+		results := plugin.groupAndMergeCurrentContent(context.Background(), []*types.SearchResult{
+			{
+				ID: "a", KnowledgeID: "doc", ChunkType: "text", ChunkIndex: 1,
+				Content: "first", Score: 0.90, RecallWeight: 1.20,
+			},
+			{
+				ID: "b", KnowledgeID: "doc", ChunkType: "text", ChunkIndex: 2,
+				Content: "second", Score: 0.90, RecallWeight: 0.80,
+			},
+		})
+		require.Len(t, results, 1)
+		assert.Equal(t, "a", results[0].ID)
+		assert.Equal(t, 1.20, results[0].RecallWeight)
+	}
+}
+
+func TestMergedRecallWeightIsAppliedOnlyAtFinalTopK(t *testing.T) {
+	plugin := &PluginMerge{}
+	merged := plugin.groupAndMergeCurrentContent(context.Background(), []*types.SearchResult{
+		{
+			ID: "a", KnowledgeID: "doc", ChunkType: "text", ChunkIndex: 1,
+			Content: "first", Score: 0.70, RecallWeight: 1.20,
+		},
+		{
+			ID: "b", KnowledgeID: "doc", ChunkType: "text", ChunkIndex: 2,
+			Content: "second", Score: 0.90, RecallWeight: 0.80,
+		},
+	})
+	require.Len(t, merged, 1)
+	competitor := &types.SearchResult{
+		ID: "competitor", KnowledgeID: "other", ChunkType: "text",
+		Score: 0.80, RecallWeight: 1,
+	}
+	results := append(merged, competitor)
+
+	sortSearchResultsDeterministically(results)
+
+	assert.Equal(t, "competitor", results[0].ID, "0.80 must beat the merged effective score 0.72")
+	assert.Equal(t, 0.90, results[1].Score, "merge must preserve the raw score")
+	assert.Equal(t, 0.80, results[1].RecallWeight)
+}

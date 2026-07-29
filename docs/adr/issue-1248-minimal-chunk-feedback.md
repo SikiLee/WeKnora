@@ -72,8 +72,10 @@ transactional requirement.
 
 A third, deliberately narrow `chunk_feedback_audits` table is justified. It
 stores only chunk owner tenant/id, actor tenant/user, action, old/new weight,
-and creation time. Allowed actions are `feedback_weight_changed` and
-`feedback_reset`. It has no generic metadata, update, or platform API.
+trigger source, and creation time. Allowed actions are
+`feedback_weight_changed` and `feedback_reset`; `trigger_source` records the
+typed initiating operation without inferring it from the weight delta. Legacy
+rows default to `legacy`. It has no generic metadata, update, or platform API.
 
 ## ADR-4: standard retrieval integration
 
@@ -88,6 +90,11 @@ used once for final selection; `SearchResult.Score` is not mutated. Existing
 relevance thresholds still run before weighting, so a low-relevance result
 cannot cross them using weight alone. Deterministic baseline tie-breakers are
 retained.
+
+Score provenance is indivisible: parent enrichment and merged sequential
+chunks carry the `RecallWeight`, match type, matched content, and score metadata
+from the same result whose raw score wins. Equal scores retain the existing
+stable representative.
 
 The candidate window is not multiplied by a fixed factor. The rerank stage will
 retain an additive bounded reserve only when candidates exist beyond
@@ -135,6 +142,13 @@ Message deletion, session clear, single/batch/all-session deletion use the same
 feedback-aware repository transaction before non-critical external cleanup.
 Deleting references and feedback precedes projection recomputation; reset
 baselines never move backward.
+
+Chunk deletion similarly locks target chunks in stable ID order and physically
+removes their immutable attribution rows in the same transaction as the Chunk
+soft delete. Feedback tolerates and transactionally removes legacy stale
+references, but still propagates every database error. With no surviving
+attributable chunk it commits no feedback fact and returns the existing
+not-eligible domain error.
 
 ## Scope budget
 

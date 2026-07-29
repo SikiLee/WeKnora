@@ -258,11 +258,15 @@ CREATE TABLE chunk_feedback_audits (
     actor_tenant_id BIGINT NOT NULL,
     actor_user_id VARCHAR(64) NOT NULL,
     action VARCHAR(32) NOT NULL,
+    trigger_source VARCHAR(16) NOT NULL DEFAULT 'legacy',
     old_weight DOUBLE NOT NULL,
     new_weight DOUBLE NOT NULL,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     KEY idx_chunk_feedback_audit_chunk (chunk_tenant_id, chunk_id, created_at),
-    CONSTRAINT chk_chunk_feedback_audit_action CHECK (action IN ('feedback_weight_changed', 'feedback_reset'))
+    CONSTRAINT chk_chunk_feedback_audit_action CHECK (action IN ('feedback_weight_changed', 'feedback_reset')),
+    CONSTRAINT chk_chunk_feedback_audit_trigger_source CHECK (
+        trigger_source IN ('like', 'dislike', 'cancel', 'admin_reset', 'content_delete', 'legacy')
+    )
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE chunk_revisions (

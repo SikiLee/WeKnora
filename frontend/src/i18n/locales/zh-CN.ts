@@ -21,6 +21,14 @@ export default {
       outdated: '信息已过时',
       other: '其他',
     },
+    sources: {
+      like: '用户点赞',
+      dislike: '用户点踩',
+      cancel: '取消反馈',
+      admin_reset: '管理员重置',
+      content_delete: '消息删除',
+      legacy: '历史记录',
+    },
   },
   menu: {
     knowledgeBase: "知识库",

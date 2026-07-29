@@ -95,6 +95,7 @@ type chunkIndex struct {
 	knowledgeIDs    []string
 	chunkIDs        []string
 	scores          map[string]float64
+	scoreSources    map[string]string
 	matchTypes      map[string]types.MatchType
 	matchedContents map[string]string
 	processedIDs    map[string]bool // tracks all IDs (chunk + enrichment) to avoid duplicates
@@ -105,6 +106,7 @@ type chunkIndex struct {
 func (s *knowledgeBaseService) buildChunkIndex(chunks []*types.IndexWithScore) *chunkIndex {
 	idx := &chunkIndex{
 		scores:          make(map[string]float64, len(chunks)),
+		scoreSources:    make(map[string]string, len(chunks)),
 		matchTypes:      make(map[string]types.MatchType, len(chunks)),
 		matchedContents: make(map[string]string, len(chunks)),
 		processedIDs:    make(map[string]bool, len(chunks)*2),
@@ -118,6 +120,7 @@ func (s *knowledgeBaseService) buildChunkIndex(chunks []*types.IndexWithScore) *
 		}
 		idx.chunkIDs = append(idx.chunkIDs, chunk.ChunkID)
 		idx.scores[chunk.ChunkID] = chunk.Score
+		idx.scoreSources[chunk.ChunkID] = chunk.ChunkID
 		idx.matchTypes[chunk.ChunkID] = chunk.MatchType
 		idx.matchedContents[chunk.ChunkID] = chunk.Content
 	}
@@ -144,6 +147,7 @@ func (s *knowledgeBaseService) collectEnrichmentChunkIDs(
 			additionalIDs = append(additionalIDs, chunk.ParentChunkID)
 			idx.processedIDs[chunk.ParentChunkID] = true
 			idx.scores[chunk.ParentChunkID] = idx.scores[chunk.ID]
+			idx.scoreSources[chunk.ParentChunkID] = idx.scoreSource(chunk.ID)
 			idx.matchTypes[chunk.ParentChunkID] = types.MatchTypeParentChunk
 		}
 
@@ -186,6 +190,7 @@ func (s *knowledgeBaseService) collectParentChunkIDs(
 			ids = append(ids, chunk.ParentChunkID)
 			idx.processedIDs[chunk.ParentChunkID] = true
 			idx.scores[chunk.ParentChunkID] = idx.scores[chunk.ID]
+			idx.scoreSources[chunk.ParentChunkID] = idx.scoreSource(chunk.ID)
 			idx.matchTypes[chunk.ParentChunkID] = types.MatchTypeParentChunk
 		}
 	}
@@ -240,7 +245,9 @@ func (s *knowledgeBaseService) assembleSearchResults(
 		if knowledge, ok := knowledgeMap[chunk.KnowledgeID]; ok {
 			matchType := idx.matchTypes[chunk.ID]
 			matchedContent := idx.matchedContents[chunk.ID]
-			searchResults = append(searchResults, s.buildSearchResult(chunk, knowledge, score, matchType, matchedContent))
+			searchResults = append(searchResults, s.buildSearchResult(
+				chunk, knowledge, score, idx.recallWeightForScore(chunk, chunkMap), matchType, matchedContent,
+			))
 			addedChunkIDs[chunk.ID] = true
 		} else {
 			logger.Warnf(ctx, "Knowledge not found for chunk: %s, knowledge_id: %s", chunk.ID, chunk.KnowledgeID)
@@ -274,7 +281,9 @@ func (s *knowledgeBaseService) assembleSearchResults(
 					continue
 				}
 				matchedContent := idx.matchedContents[chunkID]
-				searchResults = append(searchResults, s.buildSearchResult(chunk, knowledge, score, matchType, matchedContent))
+				searchResults = append(searchResults, s.buildSearchResult(
+					chunk, knowledge, score, idx.recallWeightForScore(chunk, chunkMap), matchType, matchedContent,
+				))
 			}
 		}
 	}
@@ -303,6 +312,7 @@ func (s *knowledgeBaseService) collectRelatedChunkIDs(chunk *types.Chunk, proces
 func (s *knowledgeBaseService) buildSearchResult(chunk *types.Chunk,
 	knowledge *types.Knowledge,
 	score float64,
+	recallWeight float64,
 	matchType types.MatchType,
 	matchedContent string,
 ) *types.SearchResult {
@@ -316,7 +326,7 @@ func (s *knowledgeBaseService) buildSearchResult(chunk *types.Chunk,
 		EndAt:                   chunk.EndAt,
 		Seq:                     chunk.ChunkIndex,
 		Score:                   score,
-		RecallWeight:            chunk.RecallWeight,
+		RecallWeight:            recallWeight,
 		MatchType:               matchType,
 		Metadata:                knowledge.GetMetadata(),
 		ChunkType:               string(chunk.ChunkType),
@@ -331,6 +341,26 @@ func (s *knowledgeBaseService) buildSearchResult(chunk *types.Chunk,
 		MatchedContent:          matchedContent,
 		KnowledgeBaseID:         knowledge.KnowledgeBaseID,
 	}
+}
+
+func (idx *chunkIndex) scoreSource(chunkID string) string {
+	if sourceID := idx.scoreSources[chunkID]; sourceID != "" {
+		return sourceID
+	}
+	return chunkID
+}
+
+func (idx *chunkIndex) recallWeightForScore(
+	chunk *types.Chunk, chunkMap map[string]*types.Chunk,
+) float64 {
+	if chunk == nil {
+		return 0
+	}
+	source := chunkMap[idx.scoreSource(chunk.ID)]
+	if source == nil {
+		return chunk.RecallWeight
+	}
+	return source.RecallWeight
 }
 
 // isSearchableChunk checks if a chunk type should be included in search results.

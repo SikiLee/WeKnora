@@ -287,6 +287,7 @@ func (r *feedbackRepository) ApplyMessageFeedback(
 	ctx context.Context, input types.ApplyMessageFeedbackInput,
 ) (*types.MessageFeedbackState, error) {
 	var state *types.MessageFeedbackState
+	noAttributableChunks := false
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var message types.Message
 		err := tx.Table("messages AS m").Select("m.*").
@@ -309,7 +310,8 @@ func (r *feedbackRepository) ApplyMessageFeedback(
 			return err
 		}
 		if len(keys) == 0 {
-			return ErrFeedbackNotEligible
+			noAttributableChunks = true
+			return nil
 		}
 
 		var existing types.MessageFeedback
@@ -376,8 +378,13 @@ func (r *feedbackRepository) ApplyMessageFeedback(
 		default:
 			return fmt.Errorf("invalid feedback type %q", input.Type)
 		}
-		return recomputeChunks(tx, keys, input.ActorTenantID, input.ActorUserID)
+		return recomputeChunks(
+			tx, keys, input.ActorTenantID, input.ActorUserID, feedbackTriggerSource(input.Type),
+		)
 	})
+	if err == nil && noAttributableChunks {
+		return nil, ErrFeedbackNotEligible
+	}
 	return state, err
 }
 
@@ -398,22 +405,50 @@ func lockReferencedChunks(
 	}
 	keys := make([]referenceKey, 0, len(refs))
 	chunks := make([]types.Chunk, 0, len(refs))
+	staleReferenceIDs := make([]string, 0)
 	for _, ref := range refs {
 		var chunk types.Chunk
 		if err := tx.Where("tenant_id = ? AND id = ?", ref.ChunkTenantID, ref.ChunkID).
 			Clauses(clause.Locking{Strength: "UPDATE"}).First(&chunk).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return nil, nil, ErrFeedbackChunkNotFound
+				staleReferenceIDs = append(staleReferenceIDs, ref.ID)
+				continue
 			}
 			return nil, nil, err
 		}
 		keys = append(keys, referenceKey{tenantID: ref.ChunkTenantID, chunkID: ref.ChunkID})
 		chunks = append(chunks, chunk)
 	}
+	if len(staleReferenceIDs) > 0 {
+		sort.Strings(staleReferenceIDs)
+		if err := tx.Where("id IN ?", staleReferenceIDs).
+			Delete(&types.MessageChunkReference{}).Error; err != nil {
+			return nil, nil, err
+		}
+	}
 	return keys, chunks, nil
 }
 
-func recomputeChunks(tx *gorm.DB, keys []referenceKey, actorTenantID uint64, actorUserID string) error {
+func feedbackTriggerSource(feedbackType types.FeedbackType) types.FeedbackTriggerSource {
+	switch feedbackType {
+	case types.FeedbackTypeLike:
+		return types.FeedbackTriggerLike
+	case types.FeedbackTypeDislike:
+		return types.FeedbackTriggerDislike
+	case types.FeedbackTypeNone:
+		return types.FeedbackTriggerCancel
+	default:
+		return types.FeedbackTriggerLegacy
+	}
+}
+
+func recomputeChunks(
+	tx *gorm.DB,
+	keys []referenceKey,
+	actorTenantID uint64,
+	actorUserID string,
+	triggerSource types.FeedbackTriggerSource,
+) error {
 	for _, key := range keys {
 		var chunk types.Chunk
 		if err := tx.Where("tenant_id = ? AND id = ?", key.tenantID, key.chunkID).
@@ -476,7 +511,8 @@ func recomputeChunks(tx *gorm.DB, keys []referenceKey, actorTenantID uint64, act
 				ChunkID:       key.chunkID,
 				ActorTenantID: actorTenantID,
 				ActorUserID:   actorUserID,
-				Action:        "feedback_weight_changed",
+				Action:        types.ChunkFeedbackAuditActionWeightChanged,
+				TriggerSource: triggerSource,
 				OldWeight:     oldWeight,
 				NewWeight:     weight,
 				CreatedAt:     time.Now(),
@@ -531,7 +567,8 @@ func (r *feedbackRepository) ResetChunkFeedback(
 			ChunkID:       input.ChunkID,
 			ActorTenantID: input.ActorTenantID,
 			ActorUserID:   input.ActorUserID,
-			Action:        "feedback_reset",
+			Action:        types.ChunkFeedbackAuditActionReset,
+			TriggerSource: types.FeedbackTriggerAdminReset,
 			OldWeight:     oldWeight,
 			NewWeight:     1,
 			CreatedAt:     time.Now(),
@@ -650,5 +687,7 @@ func deleteMessagesAndRecompute(
 	if err := tx.Where("id IN ?", messageIDs).Delete(&types.Message{}).Error; err != nil {
 		return err
 	}
-	return recomputeChunks(tx, keys, actorTenantID, actorUserID)
+	return recomputeChunks(
+		tx, keys, actorTenantID, actorUserID, types.FeedbackTriggerContentDelete,
+	)
 }

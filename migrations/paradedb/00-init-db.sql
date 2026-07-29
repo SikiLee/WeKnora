@@ -226,6 +226,9 @@ CREATE TABLE IF NOT EXISTS chunk_feedback_audits (
     actor_tenant_id BIGINT NOT NULL,
     actor_user_id VARCHAR(64) NOT NULL,
     action VARCHAR(32) NOT NULL CHECK (action IN ('feedback_weight_changed', 'feedback_reset')),
+    trigger_source VARCHAR(16) NOT NULL DEFAULT 'legacy' CHECK (
+        trigger_source IN ('like', 'dislike', 'cancel', 'admin_reset', 'content_delete', 'legacy')
+    ),
     old_weight DOUBLE PRECISION NOT NULL,
     new_weight DOUBLE PRECISION NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()

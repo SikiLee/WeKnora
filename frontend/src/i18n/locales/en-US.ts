@@ -21,6 +21,14 @@ export default {
       outdated: 'Outdated',
       other: 'Other',
     },
+    sources: {
+      like: 'Like',
+      dislike: 'Dislike',
+      cancel: 'Feedback cancelled',
+      admin_reset: 'Admin reset',
+      content_delete: 'Message deleted',
+      legacy: 'Legacy event',
+    },
   },
   menu: {
     knowledgeBase: 'Knowledge Base',

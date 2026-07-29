@@ -20,6 +20,24 @@ const (
 	FeedbackReasonOther      FeedbackReasonCode = "other"
 )
 
+type ChunkFeedbackAuditAction string
+
+const (
+	ChunkFeedbackAuditActionWeightChanged ChunkFeedbackAuditAction = "feedback_weight_changed"
+	ChunkFeedbackAuditActionReset         ChunkFeedbackAuditAction = "feedback_reset"
+)
+
+type FeedbackTriggerSource string
+
+const (
+	FeedbackTriggerLike          FeedbackTriggerSource = "like"
+	FeedbackTriggerDislike       FeedbackTriggerSource = "dislike"
+	FeedbackTriggerCancel        FeedbackTriggerSource = "cancel"
+	FeedbackTriggerAdminReset    FeedbackTriggerSource = "admin_reset"
+	FeedbackTriggerContentDelete FeedbackTriggerSource = "content_delete"
+	FeedbackTriggerLegacy        FeedbackTriggerSource = "legacy"
+)
+
 type MessageFeedback struct {
 	ID               string              `json:"id" gorm:"type:varchar(36);primaryKey"`
 	TenantID         uint64              `json:"tenant_id" gorm:"not null;uniqueIndex:idx_message_feedback_actor"`
@@ -47,15 +65,16 @@ type MessageChunkReference struct {
 func (MessageChunkReference) TableName() string { return "message_chunk_references" }
 
 type ChunkFeedbackAudit struct {
-	ID            uint64    `json:"id" gorm:"primaryKey;autoIncrement"`
-	ChunkTenantID uint64    `json:"chunk_tenant_id" gorm:"not null;index:idx_chunk_feedback_audit_chunk"`
-	ChunkID       string    `json:"chunk_id" gorm:"type:varchar(36);not null;index:idx_chunk_feedback_audit_chunk"`
-	ActorTenantID uint64    `json:"-" gorm:"not null"`
-	ActorUserID   string    `json:"-" gorm:"type:varchar(64);not null"`
-	Action        string    `json:"action" gorm:"type:varchar(32);not null"`
-	OldWeight     float64   `json:"old_weight" gorm:"not null"`
-	NewWeight     float64   `json:"new_weight" gorm:"not null"`
-	CreatedAt     time.Time `json:"created_at"`
+	ID            uint64                   `json:"id" gorm:"primaryKey;autoIncrement"`
+	ChunkTenantID uint64                   `json:"chunk_tenant_id" gorm:"not null;index:idx_chunk_feedback_audit_chunk"`
+	ChunkID       string                   `json:"chunk_id" gorm:"type:varchar(36);not null;index:idx_chunk_feedback_audit_chunk"`
+	ActorTenantID uint64                   `json:"-" gorm:"not null"`
+	ActorUserID   string                   `json:"-" gorm:"type:varchar(64);not null"`
+	Action        ChunkFeedbackAuditAction `json:"action" gorm:"type:varchar(32);not null"`
+	TriggerSource FeedbackTriggerSource    `json:"trigger_source" gorm:"type:varchar(16);not null;default:legacy"`
+	OldWeight     float64                  `json:"old_weight" gorm:"not null"`
+	NewWeight     float64                  `json:"new_weight" gorm:"not null"`
+	CreatedAt     time.Time                `json:"created_at"`
 }
 
 func (ChunkFeedbackAudit) TableName() string { return "chunk_feedback_audits" }

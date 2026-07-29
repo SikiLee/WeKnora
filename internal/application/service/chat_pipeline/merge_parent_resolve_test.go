@@ -157,3 +157,39 @@ func TestParentChildImageHit_WindowSliceAndFilter(t *testing.T) {
 		t.Fatalf("infos: %+v", infos)
 	}
 }
+
+func TestResolvedParentChildrenKeepWinningScoreWeightPair(t *testing.T) {
+	repo := &expandChunkRepo{
+		chunks: map[string]*types.Chunk{
+			"parent": {
+				ID: "parent", ChunkType: types.ChunkTypeParentText,
+				Content: "shared parent context",
+			},
+		},
+	}
+	plugin := &PluginMerge{chunkRepo: repo}
+	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(1))
+	results := []*types.SearchResult{
+		{
+			ID: "a", KnowledgeID: "doc", ChunkType: string(types.ChunkTypeText),
+			ChunkIndex: 1, ParentChunkID: "parent", Content: "child a",
+			Score: 0.70, RecallWeight: 1.20,
+		},
+		{
+			ID: "b", KnowledgeID: "doc", ChunkType: string(types.ChunkTypeText),
+			ChunkIndex: 2, ParentChunkID: "parent", Content: "child b",
+			Score: 0.90, RecallWeight: 0.80,
+		},
+	}
+
+	resolved := plugin.resolveParentChunks(ctx, &types.ChatManage{}, results)
+	merged := plugin.groupAndMergeCurrentContent(ctx, resolved)
+
+	if len(merged) != 1 {
+		t.Fatalf("merged result count = %d, want 1", len(merged))
+	}
+	if merged[0].Score != 0.90 || merged[0].RecallWeight != 0.80 {
+		t.Fatalf("score/weight = %.2f/%.2f, want 0.90/0.80",
+			merged[0].Score, merged[0].RecallWeight)
+	}
+}
