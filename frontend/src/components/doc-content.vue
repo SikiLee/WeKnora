@@ -22,6 +22,7 @@ import { useI18n } from 'vue-i18n';
 import { useAuthStore } from '@/stores/auth';
 import DocumentPreview from '@/components/document-preview.vue';
 import KnowledgeProcessingTimeline from '@/components/knowledge-processing-timeline.vue';
+import ChunkFeedbackSummary from '@/components/ChunkFeedbackSummary.vue';
 
 const { t } = useI18n();
 const authStore = useAuthStore();
@@ -725,8 +726,12 @@ const mergedContent = computed(() => {
 });
 
 // 计算处理后的分块数据，避免在模板中频繁调用方法和 JSON.parse
+const onlyNeedsOptimization = ref(false);
 const processedChunks = computed(() => {
-  return (props.details?.md || []).map((item: any, index: number) => {
+  const chunks = onlyNeedsOptimization.value
+    ? (props.details?.md || []).filter((item: any) => item.needs_optimization)
+    : (props.details?.md || []);
+  return chunks.map((item: any, index: number) => {
     return {
       original: item,
       processedContent: processMarkdown(item.content),
@@ -1840,6 +1845,15 @@ const handleDetailsScroll = () => {
                 class="view-mode-btn">
                 {{ $t('knowledgeBase.viewChunks') }}
               </t-button>
+              <t-button
+                v-if="viewMode === 'chunks'"
+                size="small"
+                :variant="onlyNeedsOptimization ? 'base' : 'outline'"
+                :theme="onlyNeedsOptimization ? 'danger' : 'default'"
+                @click="onlyNeedsOptimization = !onlyNeedsOptimization"
+              >
+                {{ $t('feedback.needsOptimization') }}
+              </t-button>
             </div>
           </div>
 
@@ -1872,6 +1886,11 @@ const handleDetailsScroll = () => {
                     <span class="chunk-meta">{{ chunk.meta }}</span>
                   </div>
                   <div class="chunk-header-right">
+                    <ChunkFeedbackSummary
+                      :chunk="chunk.original"
+                      :knowledge-base-id="props.kbId || chunk.original.knowledge_base_id"
+                      :can-reset="canEditContent"
+                    />
                     <t-tooltip v-if="chunk.original.index_status === 'failed' && canEditContent"
                       :content="$t('knowledgeBase.retryIndex')" placement="top">
                       <t-button class="icon-action-btn" size="small" theme="danger" variant="text" shape="square"

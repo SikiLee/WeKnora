@@ -1,4 +1,27 @@
 export default {
+  feedback: {
+    answerLabel: '回答反馈',
+    like: '有帮助',
+    dislike: '没有帮助',
+    reasonLabel: '哪些方面需要改进？',
+    saveFailed: '反馈保存失败，请重试。',
+    chunkDetails: '分块反馈',
+    sessionCount: '关联会话 {count} 个',
+    needsOptimization: '只看待优化',
+    reset: '重置反馈',
+    resetSuccess: '分块反馈已重置',
+    resetFailed: '分块反馈重置失败',
+    loadFailed: '分块反馈加载失败',
+    optimizationThreshold: '低质量反馈阈值',
+    optimizationThresholdDescription: '正向率低于该值的分块会标记为待优化。',
+    reasons: {
+      inaccurate: '内容不准确',
+      irrelevant: '与问题无关',
+      incomplete: '回答不完整',
+      outdated: '信息已过时',
+      other: '其他',
+    },
+  },
   menu: {
     knowledgeBase: "知识库",
     agents: "智能体",

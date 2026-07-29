@@ -1,4 +1,27 @@
 export default {
+  feedback: {
+    answerLabel: 'Answer feedback',
+    like: 'Helpful',
+    dislike: 'Not helpful',
+    reasonLabel: 'What could be improved?',
+    saveFailed: 'Could not save feedback. Please try again.',
+    chunkDetails: 'Chunk feedback',
+    sessionCount: '{count} related sessions',
+    needsOptimization: 'Needs optimization',
+    reset: 'Reset feedback',
+    resetSuccess: 'Chunk feedback reset',
+    resetFailed: 'Could not reset chunk feedback',
+    loadFailed: 'Could not load chunk feedback',
+    optimizationThreshold: 'Low-quality feedback threshold',
+    optimizationThresholdDescription: 'Chunks below this positive rate are marked as needing optimization.',
+    reasons: {
+      inaccurate: 'Inaccurate',
+      irrelevant: 'Irrelevant',
+      incomplete: 'Incomplete',
+      outdated: 'Outdated',
+      other: 'Other',
+    },
+  },
   menu: {
     knowledgeBase: 'Knowledge Base',
     agents: 'Agents',

@@ -46,6 +46,11 @@
                     :title="$t('agent.addToKnowledgeBase')">
                     <t-icon name="bookmark-add" />
                 </t-button>
+                <AnswerFeedbackControls
+                    v-if="feedbackEligible && sessionId && session.id"
+                    :session-id="sessionId"
+                    :message="session"
+                />
                 <!-- Fallback 提示图标 -->
                 <t-tooltip v-if="session.is_fallback" :content="$t('chat.fallbackHint')" placement="top">
                     <t-button size="small" variant="outline" shape="round" class="fallback-icon-btn">
@@ -79,6 +84,7 @@ import deepThink from './deepThink.vue';
 import AgentStreamDisplay from './AgentStreamDisplay.vue';
 import RagPipelineProgress from './RagPipelineProgress.vue';
 import ChatRequestInfoButton from '@/components/ChatRequestInfoButton.vue';
+import AnswerFeedbackControls from './AnswerFeedbackControls.vue';
 import ChatCitationFloat from '@/components/ChatCitationFloat.vue';
 import picturePreview from '@/components/picture-preview.vue';
 import { sanitizeMarkdownHTML, safeMarkdownToHTML, createSafeImage, isValidImageURL, hydrateProtectedFileImages } from '@/utils/security';
@@ -164,6 +170,14 @@ const props = defineProps({
 });
 
 const showRequestInfo = computed(() => !!(props.session?.request_id || props.session?.id));
+const feedbackEligible = computed(() => {
+    if (props.session?.feedback_eligible) return true;
+    if (props.session?.isAgentMode || !props.session?.is_completed) return false;
+    const refs = props.session?.knowledge_references;
+    return Array.isArray(refs) && refs.some((ref) =>
+        ref?.chunk_type !== 'web_search' && ref?.knowledge_source !== 'web_search'
+    );
+});
 
 const preview = (url) => {
     nextTick(() => {

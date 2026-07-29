@@ -1,6 +1,6 @@
 # Issue #1248: minimal chunk feedback design
 
-Status: accepted for implementation  
+Status: accepted for implementation
 Baseline: `4f7a36c7e607bcb21e265617bd80cfb98348fe22`
 
 ## Sources and acceptance matrix

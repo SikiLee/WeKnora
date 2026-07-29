@@ -104,6 +104,22 @@
           @change="handleParamChange"
         />
       </div>
+
+      <div class="setting-item">
+        <div class="setting-label-row">
+          <span>{{ t('feedback.optimizationThreshold') }}</span>
+          <span class="value-display">{{ Math.round(localConfig.chunk_optimization_threshold * 100) }}%</span>
+        </div>
+        <p class="setting-desc">{{ t('feedback.optimizationThresholdDescription') }}</p>
+        <t-slider
+          v-model="localConfig.chunk_optimization_threshold"
+          :min="0.05"
+          :max="1"
+          :step="0.05"
+          :disabled="!canEdit"
+          @change="handleParamChange"
+        />
+      </div>
     </div>
   </div>
 </template>
@@ -134,6 +150,7 @@ const defaultConfig: RetrievalConfig = {
   rerank_top_k: 10,
   rerank_threshold: 0.2,
   rerank_model_id: '',
+  chunk_optimization_threshold: 0.5,
 }
 
 const localConfig = reactive<RetrievalConfig>({ ...defaultConfig })
@@ -152,6 +169,8 @@ const loadConfig = async () => {
         rerank_top_k: cfg.rerank_top_k || defaultConfig.rerank_top_k,
         rerank_threshold: cfg.rerank_threshold ?? defaultConfig.rerank_threshold,
         rerank_model_id: cfg.rerank_model_id || '',
+        chunk_optimization_threshold:
+          cfg.chunk_optimization_threshold || defaultConfig.chunk_optimization_threshold,
       })
       initialConfig = { ...localConfig }
     }
