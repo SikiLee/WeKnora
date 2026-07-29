@@ -79,6 +79,11 @@ func sortSearchResultsDeterministically(results []*types.SearchResult) {
 		if left == nil || right == nil {
 			return left != nil
 		}
+		leftEffective := left.Score * normalizedRecallWeight(left.RecallWeight)
+		rightEffective := right.Score * normalizedRecallWeight(right.RecallWeight)
+		if leftEffective != rightEffective {
+			return leftEffective > rightEffective
+		}
 		if left.Score != right.Score {
 			return left.Score > right.Score
 		}
@@ -93,4 +98,17 @@ func sortSearchResultsDeterministically(results []*types.SearchResult) {
 		}
 		return left.ID < right.ID
 	})
+}
+
+func normalizedRecallWeight(weight float64) float64 {
+	if weight == 0 {
+		return 1
+	}
+	if weight < 0.8 {
+		return 0.8
+	}
+	if weight > 1.2 {
+		return 1.2
+	}
+	return weight
 }

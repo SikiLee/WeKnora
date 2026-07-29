@@ -220,7 +220,12 @@ func (p *PluginRerank) OnEvent(ctx context.Context,
 		reranked = append(reranked, sr)
 	}
 
-	final := applyMMR(ctx, reranked, chatManage, min(len(reranked), max(1, chatManage.RerankTopK)), 0.7)
+	mmrTopK := max(1, chatManage.RerankTopK)
+	if hasFeedbackWeight(reranked) {
+		reserve := max(1, min(10, mmrTopK/2))
+		mmrTopK += reserve
+	}
+	final := applyMMR(ctx, reranked, chatManage, min(len(reranked), mmrTopK), 0.7)
 	chatManage.RerankResult = final
 
 	// Log composite top scores and MMR selection summary
@@ -263,6 +268,15 @@ func (p *PluginRerank) OnEvent(ctx context.Context,
 		"filtered_cnt": len(chatManage.RerankResult),
 	})
 	return next()
+}
+
+func hasFeedbackWeight(results []*types.SearchResult) bool {
+	for _, result := range results {
+		if result != nil && normalizedRecallWeight(result.RecallWeight) != 1 {
+			return true
+		}
+	}
+	return false
 }
 
 func buildRerankSpanOutput(
