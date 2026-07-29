@@ -207,6 +207,9 @@ type SearchResult struct {
 
 	// KnowledgeBaseID is the ID of the knowledge base this result belongs to
 	KnowledgeBaseID string `json:"knowledge_base_id,omitempty"`
+	// RecallWeight is the persisted chunk feedback projection. It is kept
+	// separate from Score so retrieval relevance is never mutated.
+	RecallWeight float64 `json:"-"`
 }
 
 // SearchParams represents the search parameters
