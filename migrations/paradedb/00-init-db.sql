@@ -209,7 +209,10 @@ CREATE TABLE IF NOT EXISTS message_feedbacks (
     message_id VARCHAR(36) NOT NULL,
     feedback_type VARCHAR(16) NOT NULL CHECK (feedback_type IN ('like', 'dislike')),
     reason_code VARCHAR(16) CHECK (
-        reason_code IS NULL OR reason_code IN ('inaccurate', 'irrelevant', 'incomplete', 'outdated', 'other')
+        (feedback_type = 'like' AND reason_code IS NULL)
+        OR
+        (feedback_type = 'dislike' AND reason_code IS NOT NULL
+            AND reason_code IN ('inaccurate', 'irrelevant', 'incomplete', 'outdated', 'other'))
     ),
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),

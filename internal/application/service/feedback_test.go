@@ -71,13 +71,39 @@ func TestFeedbackServiceUsesAuthenticatedWebActor(t *testing.T) {
 }
 
 func TestFeedbackServiceRejectsInvalidReasonCombination(t *testing.T) {
-	repo := &feedbackRepositoryStub{}
-	svc := NewFeedbackService(repo)
-	reason := types.FeedbackReasonInaccurate
-	_, err := svc.ApplyMessageFeedback(
-		feedbackServiceContext(types.Principal{Type: types.PrincipalWebUser, ID: "user-1"}),
-		"session", "message", types.FeedbackTypeLike, &reason,
-	)
-	assert.ErrorIs(t, err, ErrInvalidFeedback)
-	assert.Nil(t, repo.input)
+	valid := types.FeedbackReasonInaccurate
+	empty := types.FeedbackReasonCode("")
+	invalid := types.FeedbackReasonCode("invented")
+	for _, testCase := range []struct {
+		name           string
+		feedbackType   types.FeedbackType
+		reason         *types.FeedbackReasonCode
+		expectAccepted bool
+	}{
+		{name: "dislike valid", feedbackType: types.FeedbackTypeDislike, reason: &valid, expectAccepted: true},
+		{name: "dislike nil", feedbackType: types.FeedbackTypeDislike},
+		{name: "dislike empty", feedbackType: types.FeedbackTypeDislike, reason: &empty},
+		{name: "dislike invalid", feedbackType: types.FeedbackTypeDislike, reason: &invalid},
+		{name: "like no reason", feedbackType: types.FeedbackTypeLike, expectAccepted: true},
+		{name: "like with reason", feedbackType: types.FeedbackTypeLike, reason: &valid},
+		{name: "none no reason", feedbackType: types.FeedbackTypeNone, expectAccepted: true},
+		{name: "none with reason", feedbackType: types.FeedbackTypeNone, reason: &valid},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			repo := &feedbackRepositoryStub{}
+			svc := NewFeedbackService(repo)
+			_, err := svc.ApplyMessageFeedback(
+				feedbackServiceContext(types.Principal{Type: types.PrincipalWebUser, ID: "user-1"}),
+				"session", "message", testCase.feedbackType, testCase.reason,
+			)
+			if testCase.expectAccepted {
+				require.NoError(t, err)
+				require.NotNil(t, repo.input)
+				assert.Equal(t, testCase.reason, repo.input.ReasonCode)
+				return
+			}
+			assert.ErrorIs(t, err, ErrInvalidFeedback)
+			assert.Nil(t, repo.input)
+		})
+	}
 }

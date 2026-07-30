@@ -45,13 +45,15 @@ func (s *feedbackService) ApplyMessageFeedback(
 	}
 	switch feedbackType {
 	case types.FeedbackTypeNone:
-		reason = nil
+		if reason != nil {
+			return nil, ErrInvalidFeedback
+		}
 	case types.FeedbackTypeLike:
 		if reason != nil {
 			return nil, ErrInvalidFeedback
 		}
 	case types.FeedbackTypeDislike:
-		if reason != nil && !validFeedbackReason(*reason) {
+		if reason == nil || !validFeedbackReason(*reason) {
 			return nil, ErrInvalidFeedback
 		}
 	default:

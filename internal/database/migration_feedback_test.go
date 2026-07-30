@@ -50,6 +50,7 @@ func TestChunkFeedbackSQLiteMigrationUpDownUp(t *testing.T) {
 	assertSQLiteColumn(t, db, "chunks", "feedback_reset_at", true)
 	assertSQLiteColumn(t, db, "message_feedbacks", "feedback_revision", false)
 	assertSQLiteFeedbackUniqueConstraints(t, db)
+	assertSQLiteFeedbackReasonConstraint(t, db)
 
 	execMigrationFile(t, db, migrationDir, "000002_chunk_feedback.down.sql")
 	assertSQLiteColumn(t, db, "chunks", "feedback_reset_at", false)
@@ -60,6 +61,44 @@ func TestChunkFeedbackSQLiteMigrationUpDownUp(t *testing.T) {
 	execMigrationFile(t, db, migrationDir, "000002_chunk_feedback.up.sql")
 	assertSQLiteColumn(t, db, "chunks", "feedback_reset_at", true)
 	assertSQLiteTable(t, db, "message_feedbacks", true)
+}
+
+func assertSQLiteFeedbackReasonConstraint(t *testing.T, db *sql.DB) {
+	t.Helper()
+	for _, valid := range []struct {
+		id           string
+		feedbackType string
+		reason       interface{}
+	}{
+		{id: "valid-like", feedbackType: "like"},
+		{id: "valid-dislike", feedbackType: "dislike", reason: "inaccurate"},
+	} {
+		if _, err := db.Exec(`
+			INSERT INTO message_feedbacks
+				(id, tenant_id, user_id, session_id, message_id, feedback_type, reason_code)
+			VALUES (?, 1, ?, 'session', ?, ?, ?)
+		`, valid.id, valid.id, valid.id, valid.feedbackType, valid.reason); err != nil {
+			t.Fatalf("valid feedback contract %q rejected: %v", valid.id, err)
+		}
+	}
+	for _, invalid := range []struct {
+		id           string
+		feedbackType string
+		reason       interface{}
+	}{
+		{id: "dislike-null", feedbackType: "dislike"},
+		{id: "dislike-empty", feedbackType: "dislike", reason: ""},
+		{id: "dislike-invalid", feedbackType: "dislike", reason: "invented"},
+		{id: "like-reason", feedbackType: "like", reason: "inaccurate"},
+	} {
+		if _, err := db.Exec(`
+			INSERT INTO message_feedbacks
+				(id, tenant_id, user_id, session_id, message_id, feedback_type, reason_code)
+			VALUES (?, 1, ?, 'session', ?, ?, ?)
+		`, invalid.id, invalid.id, invalid.id, invalid.feedbackType, invalid.reason); err == nil {
+			t.Fatalf("invalid feedback contract %q unexpectedly passed", invalid.id)
+		}
+	}
 }
 
 func assertSQLiteFeedbackUniqueConstraints(t *testing.T, db *sql.DB) {

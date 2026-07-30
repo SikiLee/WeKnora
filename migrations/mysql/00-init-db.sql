@@ -246,7 +246,10 @@ CREATE TABLE message_feedbacks (
     KEY idx_message_feedback_message (tenant_id, message_id),
     CONSTRAINT chk_message_feedback_type CHECK (feedback_type IN ('like', 'dislike')),
     CONSTRAINT chk_message_feedback_reason CHECK (
-        reason_code IS NULL OR reason_code IN ('inaccurate', 'irrelevant', 'incomplete', 'outdated', 'other')
+        (feedback_type = 'like' AND reason_code IS NULL)
+        OR
+        (feedback_type = 'dislike' AND reason_code IS NOT NULL
+            AND reason_code IN ('inaccurate', 'irrelevant', 'incomplete', 'outdated', 'other'))
     )
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
