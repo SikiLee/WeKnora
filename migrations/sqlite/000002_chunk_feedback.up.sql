@@ -24,7 +24,10 @@ CREATE TABLE message_feedbacks (
     message_id VARCHAR(36) NOT NULL,
     feedback_type VARCHAR(16) NOT NULL CHECK (feedback_type IN ('like', 'dislike')),
     reason_code VARCHAR(16) CHECK (
-        reason_code IS NULL OR reason_code IN ('inaccurate', 'irrelevant', 'incomplete', 'outdated', 'other')
+        (feedback_type = 'like' AND reason_code IS NULL)
+        OR
+        (feedback_type = 'dislike' AND reason_code IS NOT NULL
+            AND reason_code IN ('inaccurate', 'irrelevant', 'incomplete', 'outdated', 'other'))
     ),
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
