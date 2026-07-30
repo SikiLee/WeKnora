@@ -66,27 +66,36 @@ func waitForFeedbackPostgresError(t *testing.T, result <-chan error, description
 }
 
 func isFeedbackPostgresChunkQuery(tx *gorm.DB) bool {
+	return isFeedbackPostgresTableQuery(tx, "chunks")
+}
+
+func isFeedbackPostgresMessageQuery(tx *gorm.DB) bool {
+	return isFeedbackPostgresTableQuery(tx, "messages")
+}
+
+func isFeedbackPostgresTableQuery(tx *gorm.DB, table string) bool {
 	if tx == nil || tx.Statement == nil {
 		return false
 	}
-	if tx.Statement.Table == "chunks" ||
-		(tx.Statement.Schema != nil && tx.Statement.Schema.Table == "chunks") {
+	if tx.Statement.Table == table ||
+		(tx.Statement.Schema != nil && tx.Statement.Schema.Table == table) {
 		return true
 	}
-	return strings.Contains(strings.ToLower(tx.Statement.SQL.String()), `from "chunks"`)
+	return strings.Contains(strings.ToLower(tx.Statement.SQL.String()), `from "`+table+`"`)
 }
 
-func installFeedbackPostgresChunkQueryBarrier(
+func installFeedbackPostgresQueryBarrier(
 	t *testing.T,
 	db *gorm.DB,
 	position string,
+	matches func(*gorm.DB) bool,
 	barrier *feedbackPostgresBarrier,
 	block bool,
 ) {
 	t.Helper()
 	name := "feedback_postgres_" + position + "_" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	callback := func(tx *gorm.DB) {
-		if !isFeedbackPostgresChunkQuery(tx) {
+		if !matches(tx) {
 			return
 		}
 		if block {
@@ -108,6 +117,32 @@ func installFeedbackPostgresChunkQueryBarrier(
 	t.Cleanup(func() {
 		require.NoError(t, db.Callback().Query().Remove(name))
 	})
+}
+
+func installFeedbackPostgresChunkQueryBarrier(
+	t *testing.T,
+	db *gorm.DB,
+	position string,
+	barrier *feedbackPostgresBarrier,
+	block bool,
+) {
+	t.Helper()
+	installFeedbackPostgresQueryBarrier(
+		t, db, position, isFeedbackPostgresChunkQuery, barrier, block,
+	)
+}
+
+func installFeedbackPostgresMessageQueryBarrier(
+	t *testing.T,
+	db *gorm.DB,
+	position string,
+	barrier *feedbackPostgresBarrier,
+	block bool,
+) {
+	t.Helper()
+	installFeedbackPostgresQueryBarrier(
+		t, db, position, isFeedbackPostgresMessageQuery, barrier, block,
+	)
 }
 
 func setupFeedbackPostgresTestDatabases(t *testing.T) (*gorm.DB, *gorm.DB) {
@@ -234,26 +269,7 @@ func seedFeedbackPostgresTestCase(
 	t *testing.T, db *gorm.DB, suffix string, chunkIDs ...string,
 ) (*types.Session, *types.Message, map[string]*types.Chunk) {
 	t.Helper()
-	session := &types.Session{
-		ID:       "session-" + suffix,
-		TenantID: 101,
-		UserID:   "",
-	}
-	message := &types.Message{
-		ID:        "message-" + suffix,
-		SessionID: session.ID,
-		Role:      "assistant",
-		Content:   "final",
-	}
-	require.NoError(t, db.Exec(
-		"INSERT INTO sessions (id, tenant_id, user_id) VALUES (?, ?, ?)",
-		session.ID, session.TenantID, session.UserID,
-	).Error)
-	require.NoError(t, db.Exec(
-		"INSERT INTO messages (id, session_id, content, role) VALUES (?, ?, ?, ?)",
-		message.ID, message.SessionID, "draft", message.Role,
-	).Error)
-
+	session, message := seedFeedbackPostgresOwnedMessage(t, db, 101, suffix, "owner-"+suffix)
 	chunks := make(map[string]*types.Chunk, len(chunkIDs))
 	for _, id := range chunkIDs {
 		chunk := &types.Chunk{
@@ -277,6 +293,32 @@ func seedFeedbackPostgresTestCase(
 		chunks[id] = chunk
 	}
 	return session, message, chunks
+}
+
+func seedFeedbackPostgresOwnedMessage(
+	t *testing.T, db *gorm.DB, tenantID uint64, suffix, userID string,
+) (*types.Session, *types.Message) {
+	t.Helper()
+	session := &types.Session{
+		ID:       "session-" + suffix,
+		TenantID: tenantID,
+		UserID:   userID,
+	}
+	message := &types.Message{
+		ID:        "message-" + suffix,
+		SessionID: session.ID,
+		Role:      "assistant",
+		Content:   "final",
+	}
+	require.NoError(t, db.Exec(
+		"INSERT INTO sessions (id, tenant_id, user_id) VALUES (?, ?, ?)",
+		session.ID, session.TenantID, session.UserID,
+	).Error)
+	require.NoError(t, db.Exec(
+		"INSERT INTO messages (id, session_id, content, role) VALUES (?, ?, ?, ?)",
+		message.ID, message.SessionID, "draft", message.Role,
+	).Error)
+	return session, message
 }
 
 func feedbackPostgresReferences(chunks ...*types.Chunk) types.References {
@@ -422,17 +464,20 @@ func TestFeedbackPostgresCompletionAndChunkDeletionConcurrency(t *testing.T) {
 		for _, input := range []types.ApplyMessageFeedbackInput{
 			{
 				MessageTenantID: session.TenantID, ActorTenantID: session.TenantID,
-				ActorUserID: "user-like", SessionID: session.ID, MessageID: message.ID,
+				ActorUserID: session.UserID, SessionID: session.ID, MessageID: message.ID,
 				Type: types.FeedbackTypeLike,
 			},
 			{
 				MessageTenantID: session.TenantID, ActorTenantID: session.TenantID,
-				ActorUserID: "user-dislike", SessionID: session.ID, MessageID: message.ID,
-				Type: types.FeedbackTypeDislike,
+				ActorUserID: session.UserID, SessionID: session.ID, MessageID: message.ID,
+				Type: types.FeedbackTypeDislike, ReasonCode: func() *types.FeedbackReasonCode {
+					reason := types.FeedbackReasonInaccurate
+					return &reason
+				}(),
 			},
 			{
 				MessageTenantID: session.TenantID, ActorTenantID: session.TenantID,
-				ActorUserID: "user-like", SessionID: session.ID, MessageID: message.ID,
+				ActorUserID: session.UserID, SessionID: session.ID, MessageID: message.ID,
 				Type: types.FeedbackTypeNone,
 			},
 		} {
@@ -450,8 +495,8 @@ func TestFeedbackPostgresCompletionAndChunkDeletionConcurrency(t *testing.T) {
 			var chunk types.Chunk
 			require.NoError(t, completionDB.First(&chunk, "id = ?", chunks[id].ID).Error)
 			assert.Zero(t, chunk.LikeCount)
-			assert.EqualValues(t, 1, chunk.DislikeCount)
-			assert.Equal(t, 0.8, chunk.RecallWeight)
+			assert.Zero(t, chunk.DislikeCount)
+			assert.Equal(t, 1.0, chunk.RecallWeight)
 		}
 		var deleted types.Chunk
 		require.NoError(t, completionDB.Unscoped().First(&deleted, "id = ?", chunks["b"].ID).Error)
@@ -464,5 +509,277 @@ func TestFeedbackPostgresCompletionAndChunkDeletionConcurrency(t *testing.T) {
 		require.NoError(t, completionDB.Model(&types.ChunkFeedbackAudit{}).
 			Where("chunk_id = ?", chunks["b"].ID).Count(&deletedChunkAuditCount).Error)
 		assert.Zero(t, deletedChunkAuditCount)
+	})
+}
+
+func TestFeedbackPostgresFeedbackAndLifecycleConcurrency(t *testing.T) {
+	t.Run("message delete serializes after feedback", func(t *testing.T) {
+		feedbackDB, lifecycleDB := setupFeedbackPostgresTestDatabases(t)
+		session, message, chunks := seedFeedbackPostgresTestCase(t, feedbackDB, "message-delete", "a")
+		repo := &feedbackRepository{db: feedbackDB}
+		_, err := repo.CompleteAssistantMessageWithReferences(
+			context.Background(), session.TenantID, message, feedbackPostgresReferences(chunks["a"]),
+		)
+		require.NoError(t, err)
+
+		feedbackLocked := newFeedbackPostgresBarrier()
+		deleteAttempted := newFeedbackPostgresBarrier()
+		installFeedbackPostgresChunkQueryBarrier(t, feedbackDB, "after", feedbackLocked, true)
+		installFeedbackPostgresMessageQueryBarrier(t, lifecycleDB, "before", deleteAttempted, false)
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+
+		feedbackResult := make(chan error, 1)
+		go func() {
+			_, applyErr := repo.ApplyMessageFeedback(ctx, types.ApplyMessageFeedbackInput{
+				MessageTenantID: session.TenantID, ActorTenantID: session.TenantID,
+				ActorUserID: session.UserID, SessionID: session.ID, MessageID: message.ID,
+				Type: types.FeedbackTypeLike,
+			})
+			feedbackResult <- applyErr
+		}()
+		waitForFeedbackPostgresSignal(t, feedbackLocked.reached, "feedback to lock its chunk")
+
+		deleteResult := make(chan error, 1)
+		go func() {
+			deleteResult <- (&feedbackRepository{db: lifecycleDB}).DeleteMessageWithFeedback(
+				ctx, session.TenantID, session.ID, message.ID, session.UserID,
+			)
+		}()
+		waitForFeedbackPostgresSignal(t, deleteAttempted.reached, "message delete to attempt its message lock")
+		feedbackLocked.unblock()
+		waitForFeedbackPostgresError(t, feedbackResult, "feedback")
+		waitForFeedbackPostgresError(t, deleteResult, "message delete")
+
+		var feedbackCount int64
+		require.NoError(t, feedbackDB.Model(&types.MessageFeedback{}).Count(&feedbackCount).Error)
+		assert.Zero(t, feedbackCount)
+		var chunk types.Chunk
+		require.NoError(t, feedbackDB.First(&chunk, "id = ?", chunks["a"].ID).Error)
+		assert.Zero(t, chunk.LikeCount)
+		assert.Zero(t, chunk.DislikeCount)
+		assert.Equal(t, 1.0, chunk.RecallWeight)
+	})
+
+	t.Run("reset serializes after feedback", func(t *testing.T) {
+		feedbackDB, resetDB := setupFeedbackPostgresTestDatabases(t)
+		session, message, chunks := seedFeedbackPostgresTestCase(t, feedbackDB, "reset", "a")
+		repo := &feedbackRepository{db: feedbackDB}
+		_, err := repo.CompleteAssistantMessageWithReferences(
+			context.Background(), session.TenantID, message, feedbackPostgresReferences(chunks["a"]),
+		)
+		require.NoError(t, err)
+
+		feedbackLocked := newFeedbackPostgresBarrier()
+		resetAttempted := newFeedbackPostgresBarrier()
+		installFeedbackPostgresChunkQueryBarrier(t, feedbackDB, "after", feedbackLocked, true)
+		installFeedbackPostgresChunkQueryBarrier(t, resetDB, "before", resetAttempted, false)
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+
+		feedbackResult := make(chan error, 1)
+		go func() {
+			_, applyErr := repo.ApplyMessageFeedback(ctx, types.ApplyMessageFeedbackInput{
+				MessageTenantID: session.TenantID, ActorTenantID: session.TenantID,
+				ActorUserID: session.UserID, SessionID: session.ID, MessageID: message.ID,
+				Type: types.FeedbackTypeLike,
+			})
+			feedbackResult <- applyErr
+		}()
+		waitForFeedbackPostgresSignal(t, feedbackLocked.reached, "feedback to lock its chunk")
+
+		resetResult := make(chan error, 1)
+		go func() {
+			resetResult <- (&feedbackRepository{db: resetDB}).ResetChunkFeedback(
+				ctx,
+				types.ResetChunkFeedbackInput{
+					ChunkTenantID: chunks["a"].TenantID, ActorTenantID: session.TenantID,
+					ActorUserID: "admin", KnowledgeBaseID: chunks["a"].KnowledgeBaseID,
+					ChunkID: chunks["a"].ID,
+				},
+			)
+		}()
+		waitForFeedbackPostgresSignal(t, resetAttempted.reached, "reset to attempt its chunk lock")
+		feedbackLocked.unblock()
+		waitForFeedbackPostgresError(t, feedbackResult, "feedback")
+		waitForFeedbackPostgresError(t, resetResult, "reset")
+
+		var chunk types.Chunk
+		require.NoError(t, feedbackDB.First(&chunk, "id = ?", chunks["a"].ID).Error)
+		assert.Zero(t, chunk.LikeCount)
+		assert.Zero(t, chunk.DislikeCount)
+		assert.Equal(t, 1.0, chunk.RecallWeight)
+		assert.NotNil(t, chunk.FeedbackResetAt)
+	})
+}
+
+func TestFeedbackPostgresFeedbackWriteConcurrency(t *testing.T) {
+	t.Run("reversed references use one deterministic chunk order", func(t *testing.T) {
+		firstDB, secondDB := setupFeedbackPostgresTestDatabases(t)
+		firstSession, firstMessage, chunks := seedFeedbackPostgresTestCase(t, firstDB, "order-a", "a", "b")
+		secondSession, secondMessage := seedFeedbackPostgresOwnedMessage(
+			t, firstDB, firstSession.TenantID, "order-b", firstSession.UserID,
+		)
+		firstRepo := &feedbackRepository{db: firstDB}
+		secondRepo := &feedbackRepository{db: secondDB}
+		_, err := firstRepo.CompleteAssistantMessageWithReferences(
+			context.Background(), firstSession.TenantID, firstMessage,
+			feedbackPostgresReferences(chunks["a"], chunks["b"]),
+		)
+		require.NoError(t, err)
+		_, err = secondRepo.CompleteAssistantMessageWithReferences(
+			context.Background(), secondSession.TenantID, secondMessage,
+			feedbackPostgresReferences(chunks["b"], chunks["a"]),
+		)
+		require.NoError(t, err)
+
+		firstLocked := newFeedbackPostgresBarrier()
+		secondAttempted := newFeedbackPostgresBarrier()
+		installFeedbackPostgresChunkQueryBarrier(t, firstDB, "after", firstLocked, true)
+		installFeedbackPostgresChunkQueryBarrier(t, secondDB, "before", secondAttempted, false)
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+
+		firstResult := make(chan error, 1)
+		go func() {
+			_, applyErr := firstRepo.ApplyMessageFeedback(ctx, types.ApplyMessageFeedbackInput{
+				MessageTenantID: firstSession.TenantID, ActorTenantID: firstSession.TenantID,
+				ActorUserID: firstSession.UserID, SessionID: firstSession.ID, MessageID: firstMessage.ID,
+				Type: types.FeedbackTypeLike,
+			})
+			firstResult <- applyErr
+		}()
+		waitForFeedbackPostgresSignal(t, firstLocked.reached, "first feedback to lock both chunks")
+		secondResult := make(chan error, 1)
+		go func() {
+			_, applyErr := secondRepo.ApplyMessageFeedback(ctx, types.ApplyMessageFeedbackInput{
+				MessageTenantID: secondSession.TenantID, ActorTenantID: secondSession.TenantID,
+				ActorUserID: secondSession.UserID, SessionID: secondSession.ID, MessageID: secondMessage.ID,
+				Type: types.FeedbackTypeLike,
+			})
+			secondResult <- applyErr
+		}()
+		waitForFeedbackPostgresSignal(t, secondAttempted.reached, "second feedback to attempt both chunks")
+		firstLocked.unblock()
+		waitForFeedbackPostgresError(t, firstResult, "first feedback")
+		waitForFeedbackPostgresError(t, secondResult, "second feedback")
+
+		for _, id := range []string{"a", "b"} {
+			var chunk types.Chunk
+			require.NoError(t, firstDB.First(&chunk, "id = ?", chunks[id].ID).Error)
+			assert.EqualValues(t, 2, chunk.LikeCount)
+			assert.Zero(t, chunk.DislikeCount)
+		}
+	})
+
+	t.Run("same user writes serialize on its message", func(t *testing.T) {
+		firstDB, secondDB := setupFeedbackPostgresTestDatabases(t)
+		session, message, chunks := seedFeedbackPostgresTestCase(t, firstDB, "same-user", "a")
+		firstRepo := &feedbackRepository{db: firstDB}
+		secondRepo := &feedbackRepository{db: secondDB}
+		_, err := firstRepo.CompleteAssistantMessageWithReferences(
+			context.Background(), session.TenantID, message, feedbackPostgresReferences(chunks["a"]),
+		)
+		require.NoError(t, err)
+
+		firstLocked := newFeedbackPostgresBarrier()
+		secondAttempted := newFeedbackPostgresBarrier()
+		installFeedbackPostgresChunkQueryBarrier(t, firstDB, "after", firstLocked, true)
+		installFeedbackPostgresMessageQueryBarrier(t, secondDB, "before", secondAttempted, false)
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		firstResult := make(chan error, 1)
+		go func() {
+			_, applyErr := firstRepo.ApplyMessageFeedback(ctx, types.ApplyMessageFeedbackInput{
+				MessageTenantID: session.TenantID, ActorTenantID: session.TenantID,
+				ActorUserID: session.UserID, SessionID: session.ID, MessageID: message.ID,
+				Type: types.FeedbackTypeLike,
+			})
+			firstResult <- applyErr
+		}()
+		waitForFeedbackPostgresSignal(t, firstLocked.reached, "first same-user write to lock the chunk")
+		secondResult := make(chan error, 1)
+		reason := types.FeedbackReasonInaccurate
+		go func() {
+			_, applyErr := secondRepo.ApplyMessageFeedback(ctx, types.ApplyMessageFeedbackInput{
+				MessageTenantID: session.TenantID, ActorTenantID: session.TenantID,
+				ActorUserID: session.UserID, SessionID: session.ID, MessageID: message.ID,
+				Type: types.FeedbackTypeDislike, ReasonCode: &reason,
+			})
+			secondResult <- applyErr
+		}()
+		waitForFeedbackPostgresSignal(t, secondAttempted.reached, "second same-user write to attempt the message")
+		firstLocked.unblock()
+		waitForFeedbackPostgresError(t, firstResult, "first same-user feedback")
+		waitForFeedbackPostgresError(t, secondResult, "second same-user feedback")
+
+		var chunk types.Chunk
+		require.NoError(t, firstDB.First(&chunk, "id = ?", chunks["a"].ID).Error)
+		assert.Zero(t, chunk.LikeCount)
+		assert.EqualValues(t, 1, chunk.DislikeCount)
+		var feedbackCount int64
+		require.NoError(t, firstDB.Model(&types.MessageFeedback{}).Count(&feedbackCount).Error)
+		assert.EqualValues(t, 1, feedbackCount)
+	})
+
+	t.Run("two owners converge on shared chunks", func(t *testing.T) {
+		firstDB, secondDB := setupFeedbackPostgresTestDatabases(t)
+		firstSession, firstMessage, chunks := seedFeedbackPostgresTestCase(t, firstDB, "owners-a", "a", "b")
+		firstSession.UserID = "owner-a"
+		require.NoError(t, firstDB.Exec(
+			"UPDATE sessions SET user_id = ? WHERE id = ?", firstSession.UserID, firstSession.ID,
+		).Error)
+		secondSession, secondMessage := seedFeedbackPostgresOwnedMessage(
+			t, firstDB, firstSession.TenantID, "owners-b", "owner-b",
+		)
+		firstRepo := &feedbackRepository{db: firstDB}
+		secondRepo := &feedbackRepository{db: secondDB}
+		_, err := firstRepo.CompleteAssistantMessageWithReferences(
+			context.Background(), firstSession.TenantID, firstMessage,
+			feedbackPostgresReferences(chunks["a"], chunks["b"]),
+		)
+		require.NoError(t, err)
+		_, err = secondRepo.CompleteAssistantMessageWithReferences(
+			context.Background(), secondSession.TenantID, secondMessage,
+			feedbackPostgresReferences(chunks["a"], chunks["b"]),
+		)
+		require.NoError(t, err)
+
+		firstLocked := newFeedbackPostgresBarrier()
+		secondAttempted := newFeedbackPostgresBarrier()
+		installFeedbackPostgresChunkQueryBarrier(t, firstDB, "after", firstLocked, true)
+		installFeedbackPostgresChunkQueryBarrier(t, secondDB, "before", secondAttempted, false)
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		firstResult := make(chan error, 1)
+		secondResult := make(chan error, 1)
+		go func() {
+			_, applyErr := firstRepo.ApplyMessageFeedback(ctx, types.ApplyMessageFeedbackInput{
+				MessageTenantID: firstSession.TenantID, ActorTenantID: firstSession.TenantID,
+				ActorUserID: firstSession.UserID, SessionID: firstSession.ID, MessageID: firstMessage.ID,
+				Type: types.FeedbackTypeLike,
+			})
+			firstResult <- applyErr
+		}()
+		waitForFeedbackPostgresSignal(t, firstLocked.reached, "first owner to lock shared chunks")
+		go func() {
+			_, applyErr := secondRepo.ApplyMessageFeedback(ctx, types.ApplyMessageFeedbackInput{
+				MessageTenantID: secondSession.TenantID, ActorTenantID: secondSession.TenantID,
+				ActorUserID: secondSession.UserID, SessionID: secondSession.ID, MessageID: secondMessage.ID,
+				Type: types.FeedbackTypeLike,
+			})
+			secondResult <- applyErr
+		}()
+		waitForFeedbackPostgresSignal(t, secondAttempted.reached, "second owner to attempt shared chunks")
+		firstLocked.unblock()
+		waitForFeedbackPostgresError(t, firstResult, "first owner feedback")
+		waitForFeedbackPostgresError(t, secondResult, "second owner feedback")
+
+		for _, id := range []string{"a", "b"} {
+			var chunk types.Chunk
+			require.NoError(t, firstDB.First(&chunk, "id = ?", chunks[id].ID).Error)
+			assert.EqualValues(t, 2, chunk.LikeCount)
+			assert.Zero(t, chunk.DislikeCount)
+		}
 	})
 }
