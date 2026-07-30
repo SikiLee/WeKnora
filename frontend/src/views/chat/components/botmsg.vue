@@ -50,6 +50,7 @@
                     v-if="feedbackEligible && sessionId && session.id"
                     :session-id="sessionId"
                     :message="session"
+                    @update:feedback="emit('feedback-change', $event)"
                 />
                 <!-- Fallback 提示图标 -->
                 <t-tooltip v-if="session.is_fallback" :content="$t('chat.fallbackHint')" placement="top">
@@ -125,7 +126,7 @@ const mentionTagIcon = (item) => {
     return 'file';
 };
 
-const emit = defineEmits(['scroll-bottom', 'render-complete-change'])
+const emit = defineEmits(['scroll-bottom', 'render-complete-change', 'feedback-change'])
 const { t } = useI18n()
 const uiStore = useUIStore();
 let parentMd = ref()
