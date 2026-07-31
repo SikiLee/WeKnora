@@ -122,6 +122,7 @@ export function createKnowledgeBase(data: {
     keyword_enabled: boolean;
     wiki_enabled: boolean;
     graph_enabled: boolean;
+    feedback_weight_enabled?: boolean;
   };
 }) {
   return post(`/api/v1/knowledge-bases`, data);
@@ -154,6 +155,7 @@ export function updateKnowledgeBase(id: string, data: {
       keyword_enabled: boolean;
       wiki_enabled: boolean;
       graph_enabled: boolean;
+      feedback_weight_enabled?: boolean;
     };
   }
 }) {

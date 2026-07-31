@@ -13,11 +13,11 @@ import (
 func feedbackWeightMergeInputs(reverse bool) []*types.SearchResult {
 	first := &types.SearchResult{
 		ID: "chunk-a", KnowledgeID: "knowledge-a", ChunkType: string(types.ChunkTypeText),
-		ChunkIndex: 0, Content: "alpha", Score: 0.70, RecallWeight: 0.8,
+		ChunkIndex: 0, Content: "alpha", Score: 0.70, RecallWeight: 0.8, FeedbackWeightEnabled: true,
 	}
 	second := &types.SearchResult{
 		ID: "chunk-b", KnowledgeID: "knowledge-a", ChunkType: string(types.ChunkTypeText),
-		ChunkIndex: 1, Content: "beta", Score: 0.90, RecallWeight: 1.2,
+		ChunkIndex: 1, Content: "beta", Score: 0.90, RecallWeight: 1.2, FeedbackWeightEnabled: true,
 	}
 	if reverse {
 		return []*types.SearchResult{second, first}
@@ -35,6 +35,7 @@ func TestMergeKeepsScoreAndRecallWeightFromSameSource(t *testing.T) {
 			require.Len(t, merged, 1)
 			assert.Equal(t, 0.90, merged[0].Score)
 			assert.Equal(t, 1.2, merged[0].RecallWeight)
+			assert.True(t, merged[0].FeedbackWeightEnabled)
 			assert.Contains(t, merged[0].Content, "alpha")
 			assert.Contains(t, merged[0].Content, "beta")
 		})
@@ -48,11 +49,11 @@ func TestContainedMergeKeepsScoreAndRecallWeightFromSameSource(t *testing.T) {
 		[]*types.SearchResult{
 			{
 				ID: "chunk-a", ChunkIndex: 0, Content: "alpha beta gamma delta epsilon",
-				Score: 0.70, RecallWeight: 0.8,
+				Score: 0.70, RecallWeight: 0.8, FeedbackWeightEnabled: true,
 			},
 			{
 				ID: "chunk-b", ChunkIndex: 9, Content: "alpha beta gamma delta epsilon zeta",
-				Score: 0.90, RecallWeight: 1.2,
+				Score: 0.90, RecallWeight: 1.2, FeedbackWeightEnabled: true,
 			},
 		},
 	)
@@ -60,6 +61,7 @@ func TestContainedMergeKeepsScoreAndRecallWeightFromSameSource(t *testing.T) {
 	require.Len(t, merged, 1)
 	assert.Equal(t, 0.90, merged[0].Score)
 	assert.Equal(t, 1.2, merged[0].RecallWeight)
+	assert.True(t, merged[0].FeedbackWeightEnabled)
 }
 
 func TestEqualScoreMergeKeepsDeterministicOriginalOwner(t *testing.T) {

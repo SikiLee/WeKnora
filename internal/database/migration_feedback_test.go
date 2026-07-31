@@ -60,6 +60,7 @@ func TestChunkFeedbackSQLiteMigrationUpDownUp(t *testing.T) {
 
 	execMigrationFile(t, db, migrationDir, "000002_chunk_feedback.up.sql")
 	assertSQLiteColumn(t, db, "chunks", "feedback_reset_at", true)
+	assertSQLiteColumn(t, db, "message_chunk_references", "chunk_knowledge_base_id", true)
 	assertSQLiteTable(t, db, "message_feedbacks", true)
 }
 
@@ -105,15 +106,15 @@ func assertSQLiteFeedbackUniqueConstraints(t *testing.T, db *sql.DB) {
 	t.Helper()
 	if _, err := db.Exec(`
 		INSERT INTO message_chunk_references
-			(id, message_tenant_id, chunk_tenant_id, message_id, chunk_id)
-		VALUES ('ref-1', 1, 2, 'message-1', 'chunk-1')
+			(id, message_tenant_id, chunk_tenant_id, chunk_knowledge_base_id, message_id, chunk_id)
+		VALUES ('ref-1', 1, 2, 'kb-1', 'message-1', 'chunk-1')
 	`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(`
 		INSERT INTO message_chunk_references
-			(id, message_tenant_id, chunk_tenant_id, message_id, chunk_id)
-		VALUES ('ref-2', 1, 2, 'message-1', 'chunk-1')
+			(id, message_tenant_id, chunk_tenant_id, chunk_knowledge_base_id, message_id, chunk_id)
+		VALUES ('ref-2', 1, 2, 'kb-1', 'message-1', 'chunk-1')
 	`); err == nil {
 		t.Fatal("duplicate message/chunk attribution unexpectedly passed")
 	}

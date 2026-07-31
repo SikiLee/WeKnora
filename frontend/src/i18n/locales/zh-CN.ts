@@ -14,6 +14,8 @@ export default {
     loadFailed: '分块反馈加载失败',
     optimizationThreshold: '低质量反馈阈值',
     optimizationThresholdDescription: '正向率低于该值的分块会标记为待优化。',
+    retrievalWeightOptIn: '使用反馈调整召回',
+    retrievalWeightOptInDescription: '仅在全局策略启用时，将此知识库加入反馈加权灰度。',
     reasons: {
       inaccurate: '内容不准确',
       irrelevant: '与问题无关',

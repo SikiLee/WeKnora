@@ -96,8 +96,8 @@ func sortSearchResultsWithFeedbackWeights(results []*types.SearchResult) {
 		if left == nil || right == nil {
 			return left != nil
 		}
-		leftEffective := left.Score * normalizedRecallWeight(left.RecallWeight)
-		rightEffective := right.Score * normalizedRecallWeight(right.RecallWeight)
+		leftEffective := left.Score * effectiveFeedbackWeight(left)
+		rightEffective := right.Score * effectiveFeedbackWeight(right)
 		if leftEffective != rightEffective {
 			return leftEffective > rightEffective
 		}
@@ -122,6 +122,13 @@ func searchResultLess(left, right *types.SearchResult) bool {
 		return left.ChunkIndex < right.ChunkIndex
 	}
 	return left.ID < right.ID
+}
+
+func effectiveFeedbackWeight(result *types.SearchResult) float64 {
+	if result == nil || !result.FeedbackWeightEnabled {
+		return 1
+	}
+	return normalizedRecallWeight(result.RecallWeight)
 }
 
 func normalizedRecallWeight(weight float64) float64 {

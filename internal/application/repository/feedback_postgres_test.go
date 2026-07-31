@@ -231,10 +231,13 @@ func setupFeedbackPostgresTestDatabases(t *testing.T) (*gorm.DB, *gorm.DB) {
 			id varchar(36) PRIMARY KEY,
 			message_tenant_id bigint NOT NULL,
 			chunk_tenant_id bigint NOT NULL,
+			chunk_knowledge_base_id varchar(36) NOT NULL,
 			message_id varchar(36) NOT NULL,
 			chunk_id varchar(36) NOT NULL,
 			created_at timestamptz NOT NULL,
-			UNIQUE (message_tenant_id, chunk_tenant_id, message_id, chunk_id)
+			UNIQUE (
+				message_tenant_id, chunk_tenant_id, chunk_knowledge_base_id, message_id, chunk_id
+			)
 		);
 		CREATE TABLE message_feedbacks (
 			id varchar(36) PRIMARY KEY,
@@ -325,7 +328,8 @@ func feedbackPostgresReferences(chunks ...*types.Chunk) types.References {
 	refs := make(types.References, 0, len(chunks))
 	for _, chunk := range chunks {
 		refs = append(refs, &types.SearchResult{
-			ID: chunk.ID, KnowledgeBaseID: chunk.KnowledgeBaseID, ChunkType: types.ChunkTypeText,
+			ID: chunk.ID, TenantID: chunk.TenantID,
+			KnowledgeBaseID: chunk.KnowledgeBaseID, ChunkType: types.ChunkTypeText,
 		})
 	}
 	return refs

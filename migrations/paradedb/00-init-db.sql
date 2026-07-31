@@ -193,13 +193,15 @@ CREATE TABLE IF NOT EXISTS message_chunk_references (
     id VARCHAR(36) PRIMARY KEY,
     message_tenant_id BIGINT NOT NULL,
     chunk_tenant_id BIGINT NOT NULL,
+    chunk_knowledge_base_id VARCHAR(36) NOT NULL,
     message_id VARCHAR(36) NOT NULL,
     chunk_id VARCHAR(36) NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-    UNIQUE (message_tenant_id, message_id, chunk_tenant_id, chunk_id)
+    UNIQUE (message_tenant_id, message_id, chunk_tenant_id, chunk_knowledge_base_id, chunk_id)
 );
 CREATE INDEX IF NOT EXISTS idx_message_reference_message ON message_chunk_references (message_tenant_id, message_id);
-CREATE INDEX IF NOT EXISTS idx_message_reference_chunk ON message_chunk_references (chunk_tenant_id, chunk_id);
+CREATE INDEX IF NOT EXISTS idx_message_reference_chunk
+    ON message_chunk_references (chunk_tenant_id, chunk_knowledge_base_id, chunk_id);
 
 CREATE TABLE IF NOT EXISTS message_feedbacks (
     id VARCHAR(36) PRIMARY KEY,

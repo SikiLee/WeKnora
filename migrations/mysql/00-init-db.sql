@@ -223,12 +223,15 @@ CREATE TABLE message_chunk_references (
     id VARCHAR(36) PRIMARY KEY,
     message_tenant_id BIGINT NOT NULL,
     chunk_tenant_id BIGINT NOT NULL,
+    chunk_knowledge_base_id VARCHAR(36) NOT NULL,
     message_id VARCHAR(36) NOT NULL,
     chunk_id VARCHAR(36) NOT NULL,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE KEY uq_message_chunk_reference (message_tenant_id, message_id, chunk_tenant_id, chunk_id),
+    UNIQUE KEY uq_message_chunk_reference (
+        message_tenant_id, message_id, chunk_tenant_id, chunk_knowledge_base_id, chunk_id
+    ),
     KEY idx_message_reference_message (message_tenant_id, message_id),
-    KEY idx_message_reference_chunk (chunk_tenant_id, chunk_id)
+    KEY idx_message_reference_chunk (chunk_tenant_id, chunk_knowledge_base_id, chunk_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE message_feedbacks (

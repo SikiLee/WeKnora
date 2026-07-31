@@ -57,6 +57,7 @@ func (p *PluginMerge) mergeSequentialChunks(
 		if current.Score > lastChunk.Score {
 			lastChunk.Score = current.Score
 			lastChunk.RecallWeight = current.RecallWeight
+			lastChunk.FeedbackWeightEnabled = current.FeedbackWeightEnabled
 		}
 	}
 

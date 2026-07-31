@@ -83,9 +83,9 @@ func validFeedbackReason(reason types.FeedbackReasonCode) bool {
 }
 
 func (s *feedbackService) ResetChunkFeedback(ctx context.Context, kbID, chunkID string) error {
-	principal, ok := types.PrincipalFromContext(ctx)
-	if !ok || principal.Type != types.PrincipalWebUser || principal.ID == "" {
-		return ErrFeedbackForbidden
+	principal, err := requireFeedbackGovernancePrincipal(ctx)
+	if err != nil {
+		return err
 	}
 	if kbID == "" || chunkID == "" {
 		return ErrInvalidFeedback
@@ -104,9 +104,21 @@ func (s *feedbackService) ResetChunkFeedback(ctx context.Context, kbID, chunkID 
 	})
 }
 
+func requireFeedbackGovernancePrincipal(ctx context.Context) (types.Principal, error) {
+	principal, ok := types.PrincipalFromContext(ctx)
+	if !ok || principal.Type != types.PrincipalWebUser || strings.TrimSpace(principal.ID) == "" ||
+		!types.TenantRoleFromContext(ctx).HasPermission(types.TenantRoleAdmin) {
+		return types.Principal{}, ErrFeedbackForbidden
+	}
+	return principal, nil
+}
+
 func (s *feedbackService) GetChunkFeedbackDetails(
 	ctx context.Context, chunkID string,
 ) (*types.ChunkFeedbackDetails, error) {
+	if _, err := requireFeedbackGovernancePrincipal(ctx); err != nil {
+		return nil, err
+	}
 	if chunkID == "" {
 		return nil, ErrInvalidFeedback
 	}

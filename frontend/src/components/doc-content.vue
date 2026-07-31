@@ -37,6 +37,7 @@ const canDeleteGeneratedQuestion = computed(() => {
   return authStore.hasRole('admin');
 });
 const canEditContent = canDeleteGeneratedQuestion;
+const canManageFeedback = computed(() => authStore.hasRole('admin'));
 
 type MetadataValueType = 'text' | 'number' | 'boolean' | 'null';
 interface MetadataDraftRow {
@@ -1901,7 +1902,7 @@ const handleDetailsScroll = () => {
                 {{ $t('knowledgeBase.viewChunks') }}
               </t-button>
               <t-button
-                v-if="viewMode === 'chunks'"
+                v-if="viewMode === 'chunks' && canManageFeedback"
                 size="small"
                 :variant="onlyNeedsOptimization ? 'base' : 'outline'"
                 :theme="onlyNeedsOptimization ? 'danger' : 'default'"
@@ -1942,6 +1943,7 @@ const handleDetailsScroll = () => {
                   </div>
                   <div class="chunk-header-right">
                     <t-popup
+                      v-if="canManageFeedback"
                       :visible="feedbackDetailChunkID === chunk.original.id"
                       trigger="click"
                       placement="bottom-right"
@@ -1979,7 +1981,7 @@ const handleDetailsScroll = () => {
                             </div>
                           </template>
                           <t-button
-                            v-if="canEditContent"
+                            v-if="canManageFeedback"
                             size="small"
                             theme="danger"
                             variant="outline"

@@ -13,7 +13,9 @@ import (
 
 type feedbackRepositoryStub struct {
 	interfaces.FeedbackRepository
-	input *types.ApplyMessageFeedbackInput
+	input       *types.ApplyMessageFeedbackInput
+	resetInput  *types.ResetChunkFeedbackInput
+	detailCalls int
 }
 
 func (s *feedbackRepositoryStub) ApplyMessageFeedback(
@@ -24,9 +26,28 @@ func (s *feedbackRepositoryStub) ApplyMessageFeedback(
 	return &types.MessageFeedbackState{Type: input.Type, ReasonCode: input.ReasonCode}, nil
 }
 
+func (s *feedbackRepositoryStub) ResetChunkFeedback(
+	_ context.Context, input types.ResetChunkFeedbackInput,
+) error {
+	s.resetInput = &input
+	return nil
+}
+
+func (s *feedbackRepositoryStub) GetChunkFeedbackDetails(
+	_ context.Context, _ uint64, _ string,
+) (*types.ChunkFeedbackDetails, error) {
+	s.detailCalls++
+	return &types.ChunkFeedbackDetails{}, nil
+}
+
 func feedbackServiceContext(principal types.Principal) context.Context {
 	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(7))
 	return types.WithPrincipal(ctx, principal)
+}
+
+func feedbackGovernanceContext(role types.TenantRole, principalType string) context.Context {
+	ctx := feedbackServiceContext(types.Principal{Type: principalType, ID: "caller"})
+	return context.WithValue(ctx, types.TenantRoleContextKey, role)
 }
 
 func TestFeedbackServiceRejectsNonWebPrincipals(t *testing.T) {
@@ -104,6 +125,41 @@ func TestFeedbackServiceRejectsInvalidReasonCombination(t *testing.T) {
 			}
 			assert.ErrorIs(t, err, ErrInvalidFeedback)
 			assert.Nil(t, repo.input)
+		})
+	}
+}
+
+func TestFeedbackGovernanceRequiresWebAdminOrOwner(t *testing.T) {
+	for _, testCase := range []struct {
+		name          string
+		role          types.TenantRole
+		principalType string
+		allowed       bool
+	}{
+		{name: "viewer", role: types.TenantRoleViewer, principalType: types.PrincipalWebUser},
+		{name: "contributor", role: types.TenantRoleContributor, principalType: types.PrincipalWebUser},
+		{name: "api key", role: types.TenantRoleOwner, principalType: types.PrincipalAPITenant},
+		{name: "admin", role: types.TenantRoleAdmin, principalType: types.PrincipalWebUser, allowed: true},
+		{name: "owner", role: types.TenantRoleOwner, principalType: types.PrincipalWebUser, allowed: true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			repo := &feedbackRepositoryStub{}
+			svc := NewFeedbackService(repo)
+			ctx := feedbackGovernanceContext(testCase.role, testCase.principalType)
+
+			_, detailErr := svc.GetChunkFeedbackDetails(ctx, "chunk")
+			resetErr := svc.ResetChunkFeedback(ctx, "kb", "chunk")
+			if testCase.allowed {
+				require.NoError(t, detailErr)
+				require.NoError(t, resetErr)
+				assert.Equal(t, 1, repo.detailCalls)
+				require.NotNil(t, repo.resetInput)
+				return
+			}
+			assert.ErrorIs(t, detailErr, ErrFeedbackForbidden)
+			assert.ErrorIs(t, resetErr, ErrFeedbackForbidden)
+			assert.Zero(t, repo.detailCalls)
+			assert.Nil(t, repo.resetInput)
 		})
 	}
 }

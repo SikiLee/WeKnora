@@ -14,6 +14,9 @@ export default {
     loadFailed: 'Could not load chunk feedback',
     optimizationThreshold: 'Low-quality feedback threshold',
     optimizationThresholdDescription: 'Chunks below this positive rate are marked as needing optimization.',
+    retrievalWeightOptIn: 'Use feedback in retrieval',
+    retrievalWeightOptInDescription:
+      'Opt this knowledge base into feedback weighting when the global policy is enabled.',
     reasons: {
       inaccurate: 'Inaccurate',
       irrelevant: 'Irrelevant',
