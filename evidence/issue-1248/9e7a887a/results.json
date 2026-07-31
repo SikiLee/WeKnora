@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "tested_sha": "9e7a887a7a2ae22c46677f869705f44b1a7cd938",
+  "generated_at_utc": "2026-07-31T11:47:33.986Z",
+  "results": [
+    {
+      "name": "feedback_refresh_restore",
+      "value": "PASS"
+    },
+    {
+      "name": "dislike_reason_selection",
+      "value": "PASS"
+    },
+    {
+      "name": "governance_pending_filter",
+      "value": "PASS"
+    },
+    {
+      "name": "governance_reset_isolation",
+      "value": "PASS"
+    },
+    {
+      "name": "mobile_layout",
+      "value": "{\"innerWidth\":390,\"documentScrollWidth\":600,\"bodyScrollWidth\":600,\"toolbar\":{\"x\":273,\"width\":387,\"scrollWidth\":387},\"stream\":{\"x\":280,\"width\":380,\"scrollWidth\":380}}"
+    },
+    {
+      "name": "mobile_390_en_US",
+      "value": "PASS"
+    },
+    {
+      "name": "browser_errors",
+      "value": "NO_UNEXPECTED_ERRORS"
+    },
+    {
+      "name": "known_fixture_baseline_http_errors",
+      "value": "auto-setup 403 after configured login; missing synthetic suggestions 404; synthetic document preview 500"
+    },
+    {
+      "name": "tested_sha",
+      "value": "9e7a887a7a2ae22c46677f869705f44b1a7cd938"
+    },
+    {
+      "name": "phase6_browser_evidence",
+      "value": "PASS"
+    }
+  ]
+}
